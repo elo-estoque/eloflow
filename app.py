@@ -73,10 +73,7 @@ def carregar_excel(file):
         for sheet_name in xls.sheet_names:
             name_upper = sheet_name.upper()
             
-            # --- CORREÇÃO DA LÓGICA AQUI ---
-            # Primeiro verificamos INATIVO, depois FRIO, depois ATIVO.
-            # Se verificar ATIVO primeiro, ele pega o "ATIVO" de dentro da palavra "INATIVO".
-            
+            # --- LÓGICA DE CATEGORIA ---
             if "INATIVO" in name_upper: 
                 categoria = "Inativos (2020-2024)"
             elif "FRIO" in name_upper: 
@@ -84,8 +81,8 @@ def carregar_excel(file):
             elif "ATIVO" in name_upper: 
                 categoria = "Ativos (2025)"
             else:
-                categoria = "Outros" # Caso tenha alguma aba de config ou resumo
-                continue # Pula abas que não sejam de dados de clientes
+                categoria = "Outros"
+                continue
             
             # Lê a aba
             df = pd.read_excel(xls, sheet_name=sheet_name)
@@ -97,7 +94,13 @@ def carregar_excel(file):
                 df['Ultima_Compra'] = df['data_temp'].dt.strftime('%d/%m/%Y').fillna("-")
             else:
                 df['Ultima_Compra'] = "-"
-                
+            
+            # Tratamento da Área de Atuação (Evitar erros no filtro)
+            if 'area_atuacao_nome' in df.columns:
+                 df['area_atuacao_nome'] = df['area_atuacao_nome'].fillna('Indefinido')
+            else:
+                 df['area_atuacao_nome'] = 'Indefinido'
+
             dfs.append(df)
             
         if not dfs:
@@ -127,21 +130,29 @@ else:
 
 df_crm = carregar_crm_db()
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
-df_full['status_venda'] = df_full['status_venda'].fillna('Novo')
+
+# --- Default Status ---
+df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
 df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
 df_full['obs'] = df_full['obs'].fillna('')
 
 # --- DASHBOARD ---
-st.title("🦅 Visão Geral - 3 Categorias")
+st.title("🦅 Visão Geral - Carteira de Recuperação")
 
-# Filtros
-c1, c2 = st.columns(2)
+# --- FILTROS (Adicionado Filtro de Área) ---
+c1, c2, c3 = st.columns(3)
 cat = c1.multiselect("Categoria", df_full['Categoria_Cliente'].unique(), default=df_full['Categoria_Cliente'].unique())
 sts = c2.multiselect("Status", df_full['status_venda'].unique(), default=df_full['status_venda'].unique())
+area = c3.multiselect("Área de Atuação", df_full['area_atuacao_nome'].unique(), default=df_full['area_atuacao_nome'].unique())
 
-df_view = df_full[(df_full['Categoria_Cliente'].isin(cat)) & (df_full['status_venda'].isin(sts))]
+# Aplica filtros (Categoria + Status + Área)
+df_view = df_full[
+    (df_full['Categoria_Cliente'].isin(cat)) & 
+    (df_full['status_venda'].isin(sts)) &
+    (df_full['area_atuacao_nome'].isin(area))
+]
 
-# Ordenação por data se existir (Recentes primeiro)
+# Ordenação por data (Recentes primeiro)
 if 'data_temp' in df_view.columns:
     df_view = df_view.sort_values(by='data_temp', ascending=False)
 
@@ -149,7 +160,7 @@ if 'data_temp' in df_view.columns:
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Total na Lista", len(df_view))
 k2.metric("Inativos/Frios", len(df_view[df_view['Categoria_Cliente'].str.contains('Inativo|Frio')]))
-k3.metric("Falta Contatar", len(df_view[df_view['ja_ligou'] == False]))
+k3.metric("Falta Contatar", len(df_view[df_view['status_venda'] == 'Não contatado']))
 k4.metric("Em Negociação", len(df_view[df_view['status_venda'] == 'Em Negociação']))
 
 st.markdown("---")
@@ -162,25 +173,37 @@ with g1:
     st.plotly_chart(fig, use_container_width=True)
 
 with g2:
-    if 'estado' in df_view.columns:
-        fig2 = px.bar(df_view['estado'].value_counts().reset_index(), x='estado', y='count', title="Por Estado", color_discrete_sequence=['#E31937'])
-        fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig2, use_container_width=True)
+    # Gráfico agora por Área de Atuação (mais relevante com o novo filtro)
+    top_areas = df_view['area_atuacao_nome'].value_counts().head(10).reset_index()
+    top_areas.columns = ['Área', 'Qtd']
+    fig2 = px.bar(top_areas, x='Área', y='Qtd', title="Top 10 Áreas de Atuação", color_discrete_sequence=['#E31937'])
+    fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig2, use_container_width=True)
 
 # --- TABELA DE TRABALHO ---
-st.subheader("🎯 Lista de Ataque (Ativos + Inativos + Frios)")
+st.subheader("🎯 Lista de Ataque")
 
 col_config = {
     "pj_id": st.column_config.TextColumn("ID", disabled=True),
     "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
     "Ultima_Compra": st.column_config.TextColumn("Última Compra", disabled=True),
-    "status_venda": st.column_config.SelectboxColumn("Status", options=['Novo', 'Tentando Contato', 'Em Negociação', 'Fechado', 'Perdido'], required=True),
+    "email_1": st.column_config.TextColumn("E-mail Principal", disabled=True), # Coluna nova
+    "area_atuacao_nome": st.column_config.TextColumn("Área", disabled=True),
+    "status_venda": st.column_config.SelectboxColumn(
+        "Status", 
+        options=['Não contatado', 'Tentando Contato', 'Em Negociação', 'Fechado', 'Perdido', 'Novo'], 
+        required=True
+    ),
     "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
     "obs": st.column_config.TextColumn("Obs", width="large")
 }
 
-cols = ['pj_id', 'razao_social', 'Ultima_Compra', 'Categoria_Cliente', 'status_venda', 'ja_ligou', 'obs']
-if 'telefone_1' in df_view.columns: cols.insert(3, 'telefone_1')
+# Definição da ordem das colunas
+cols = ['pj_id', 'razao_social', 'Ultima_Compra', 'area_atuacao_nome', 'email_1', 'status_venda', 'ja_ligou', 'obs']
+
+# Adiciona telefone se existir (para ficar completo)
+if 'telefone_1' in df_view.columns: 
+    cols.insert(4, 'telefone_1') # Insere antes do email
 
 df_edit = st.data_editor(
     df_view[cols], 
