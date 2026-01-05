@@ -128,6 +128,13 @@ else:
     st.error("Erro: Coluna 'pj_id' não encontrada.")
     st.stop()
 
+# --- TRATAMENTO DO CNPJ ---
+# Garante que CNPJ seja tratado como texto para não perder zeros ou virar notação científica
+if 'cnpj' in df_raw.columns:
+    df_raw['cnpj'] = df_raw['cnpj'].astype(str).str.replace(r'\.0$', '', regex=True) # Remove .0 se vier como float
+else:
+    df_raw['cnpj'] = "-"
+
 df_crm = carregar_crm_db()
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 
@@ -139,13 +146,13 @@ df_full['obs'] = df_full['obs'].fillna('')
 # --- DASHBOARD ---
 st.title("🦅 Visão Geral - Carteira de Recuperação")
 
-# --- FILTROS (Adicionado Filtro de Área) ---
+# --- FILTROS ---
 c1, c2, c3 = st.columns(3)
 cat = c1.multiselect("Categoria", df_full['Categoria_Cliente'].unique(), default=df_full['Categoria_Cliente'].unique())
 sts = c2.multiselect("Status", df_full['status_venda'].unique(), default=df_full['status_venda'].unique())
 area = c3.multiselect("Área de Atuação", df_full['area_atuacao_nome'].unique(), default=df_full['area_atuacao_nome'].unique())
 
-# Aplica filtros (Categoria + Status + Área)
+# Aplica filtros
 df_view = df_full[
     (df_full['Categoria_Cliente'].isin(cat)) & 
     (df_full['status_venda'].isin(sts)) &
@@ -173,7 +180,6 @@ with g1:
     st.plotly_chart(fig, use_container_width=True)
 
 with g2:
-    # Gráfico agora por Área de Atuação (mais relevante com o novo filtro)
     top_areas = df_view['area_atuacao_nome'].value_counts().head(10).reset_index()
     top_areas.columns = ['Área', 'Qtd']
     fig2 = px.bar(top_areas, x='Área', y='Qtd', title="Top 10 Áreas de Atuação", color_discrete_sequence=['#E31937'])
@@ -186,8 +192,9 @@ st.subheader("🎯 Lista de Ataque")
 col_config = {
     "pj_id": st.column_config.TextColumn("ID", disabled=True),
     "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
+    "cnpj": st.column_config.TextColumn("CNPJ", disabled=True), # Coluna CNPJ Adicionada
     "Ultima_Compra": st.column_config.TextColumn("Última Compra", disabled=True),
-    "email_1": st.column_config.TextColumn("E-mail Principal", disabled=True), # Coluna nova
+    "email_1": st.column_config.TextColumn("E-mail Principal", disabled=True),
     "area_atuacao_nome": st.column_config.TextColumn("Área", disabled=True),
     "status_venda": st.column_config.SelectboxColumn(
         "Status", 
@@ -198,12 +205,12 @@ col_config = {
     "obs": st.column_config.TextColumn("Obs", width="large")
 }
 
-# Definição da ordem das colunas
-cols = ['pj_id', 'razao_social', 'Ultima_Compra', 'area_atuacao_nome', 'email_1', 'status_venda', 'ja_ligou', 'obs']
+# Ordem das Colunas (CNPJ inserido)
+cols = ['pj_id', 'razao_social', 'cnpj', 'Ultima_Compra', 'area_atuacao_nome', 'email_1', 'status_venda', 'ja_ligou', 'obs']
 
-# Adiciona telefone se existir (para ficar completo)
+# Adiciona telefone se existir
 if 'telefone_1' in df_view.columns: 
-    cols.insert(4, 'telefone_1') # Insere antes do email
+    cols.insert(5, 'telefone_1') # Ajustei a posição para ficar perto do email
 
 df_edit = st.data_editor(
     df_view[cols], 
