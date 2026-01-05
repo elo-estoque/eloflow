@@ -9,7 +9,7 @@ import io
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Elo Flow - Prospecção", layout="wide", page_icon="🦅")
 
-# --- CSS VISUAL (DARK MODE & ESTILOS) ---
+# --- CSS VISUAL ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -29,11 +29,6 @@ st.markdown("""
     div.stButton > button { background-color: var(--brand-wine); color: white; border: none; width: 100%; border-radius: 6px; }
     div.stButton > button:hover { background-color: #C2132F; color: white; border-color: #C2132F; }
     
-    /* Destaque Data da Última Compra na Tabela */
-    div[data-testid="stDataEditor"] div[role="gridcell"][data-testid*="Ultima_Compra"] {
-        color: #E31937; font-weight: bold;
-    }
-    
     /* Estilo do Card de Modo Foco */
     .foco-card {
         background-color: #1A1A1A;
@@ -47,11 +42,16 @@ st.markdown("""
 
 pio.templates.default = "plotly_dark"
 
-# --- PERSISTÊNCIA (BANCO DE DADOS LOCAL) ---
-DB_FILE = "/app/data/db_elo_flow.csv"
+# --- CONFIGURAÇÃO DE PASTAS E ARQUIVOS ---
+DATA_DIR = "/app/data" # Diretório persistente
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
+DB_FILE = os.path.join(DATA_DIR, "db_elo_flow.csv")        # Histórico de interações
+CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")    # Arquivo Excel Salvo
+
+# --- FUNÇÕES DE PERSISTÊNCIA ---
 def carregar_crm_db():
-    os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
     if os.path.exists(DB_FILE):
         return pd.read_csv(DB_FILE, dtype={'pj_id': str})
     else:
@@ -61,7 +61,7 @@ def salvar_alteracoes(df_editor, df_original_crm):
     novos_dados = df_editor[['pj_id', 'status_venda', 'ja_ligou', 'obs']].copy()
     novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Remove duplicatas antigas para atualizar com novos dados
+    # Atualiza removendo duplicatas antigas
     crm_atualizado = df_original_crm[~df_original_crm['pj_id'].isin(novos_dados['pj_id'])]
     crm_final = pd.concat([crm_atualizado, novos_dados], ignore_index=True)
     
@@ -75,69 +75,80 @@ def converter_para_excel(df):
     return output.getvalue()
 
 def limpar_telefone(phone):
-    """Remove caracteres não numéricos para link do WhatsApp"""
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
-# --- SIDEBAR ---
+# --- SIDEBAR & UPLOAD PERSISTENTE ---
 st.sidebar.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
-uploaded_file = st.sidebar.file_uploader("📂 Importar Tabela (.xlsx)", type=["xlsx"])
+
+# Verifica se existe arquivo em cache
+arquivo_carregado = None
+usando_cache = False
+
+if os.path.exists(CACHE_FILE):
+    st.sidebar.success("✅ Lista carregada da memória!")
+    if st.sidebar.button("🗑️ Trocar Lista/Arquivo"):
+        os.remove(CACHE_FILE)
+        st.rerun()
+    arquivo_carregado = CACHE_FILE
+    usando_cache = True
+else:
+    uploaded_file = st.sidebar.file_uploader("📂 Importar Nova Tabela (.xlsx)", type=["xlsx"])
+    if uploaded_file:
+        # Salva o arquivo no disco para persistir
+        with open(CACHE_FILE, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        st.rerun() # Recarrega para usar o arquivo salvo
 
 # --- LEITURA E PROCESSAMENTO ---
 @st.cache_data
-def carregar_excel(file):
+def carregar_excel(path_or_file):
     try:
-        xls = pd.ExcelFile(file)
+        xls = pd.ExcelFile(path_or_file)
         dfs = []
         for sheet_name in xls.sheet_names:
             name_upper = sheet_name.upper()
             
-            # --- LÓGICA DE CATEGORIA ---
             if "INATIVO" in name_upper: categoria = "Inativos (Recuperação)"
             elif "FRIO" in name_upper: categoria = "Frios (Antigos)"
             elif "ATIVO" in name_upper: categoria = "Ativos (Carteira)"
-            else: continue # Ignora abas que não sejam clientes
+            else: continue 
             
             df = pd.read_excel(xls, sheet_name=sheet_name)
             df['Categoria_Cliente'] = categoria
             
-            # Tratamento da Data
             if 'DATA_EXIBICAO' in df.columns:
                 df['data_temp'] = pd.to_datetime(df['DATA_EXIBICAO'], errors='coerce', dayfirst=True)
                 df['Ultima_Compra'] = df['data_temp'].dt.strftime('%d/%m/%Y').fillna("-")
-                
-                # Cálculo de Dias sem Compra (Recência)
                 hoje = pd.Timestamp.now()
                 df['dias_sem_compra'] = (hoje - df['data_temp']).dt.days.fillna(9999).astype(int)
             else:
                 df['Ultima_Compra'] = "-"
-                df['dias_sem_compra'] = 9999 # Valor alto para quem não tem data
+                df['dias_sem_compra'] = 9999
             
-            # Tratamento de Área e Telefone
             cols_check = {'area_atuacao_nome': 'Indefinido', 'telefone_1': '', 'email_1': ''}
             for col, val in cols_check.items():
-                if col not in df.columns:
-                    df[col] = val
-                else:
-                    df[col] = df[col].fillna(val)
+                if col not in df.columns: df[col] = val
+                else: df[col] = df[col].fillna(val)
 
             dfs.append(df)
             
         if not dfs: return None
         return pd.concat(dfs, ignore_index=True)
     except Exception as e:
-        st.error(f"Erro no processamento: {e}")
         return None
 
-if not uploaded_file:
-    st.info("👆 Importe o arquivo XLSX na barra lateral para começar.")
+if not arquivo_carregado:
+    st.info("👆 Por favor, importe a planilha na barra lateral.")
     st.stop()
 
-df_raw = carregar_excel(uploaded_file)
+df_raw = carregar_excel(arquivo_carregado)
 
 if df_raw is None or df_raw.empty:
-    st.error("Nenhum dado encontrado.")
+    st.error("Erro ao ler o arquivo. Tente clicar em 'Trocar Lista' e enviar novamente.")
+    # Se der erro grave, remove o cache pra não travar o app
+    if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
     st.stop()
 
 # Garantir ID como string
@@ -153,32 +164,30 @@ if 'cnpj' in df_raw.columns:
 else:
     df_raw['cnpj'] = "-"
 
-# Merge com CRM (Dados persistentes)
+# Merge com CRM
 df_crm = carregar_crm_db()
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 
-# Preenche vazios do CRM
+# Preenche vazios
 df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
 df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
 df_full['obs'] = df_full['obs'].fillna('')
 
-# --- DASHBOARD DE GESTÃO ---
+# --- DASHBOARD ---
 st.title("🦅 Visão Geral - Carteira")
 
-# Filtros
+# Filtros Inteligentes (Persistem a seleção se possível, ou resetam)
 c1, c2, c3 = st.columns(3)
 cat = c1.multiselect("Categoria", df_full['Categoria_Cliente'].unique(), default=df_full['Categoria_Cliente'].unique())
 sts = c2.multiselect("Status", df_full['status_venda'].unique(), default=df_full['status_venda'].unique())
 area = c3.multiselect("Área", df_full['area_atuacao_nome'].unique(), default=df_full['area_atuacao_nome'].unique())
 
-# Aplicar Filtros
 df_view = df_full[
     (df_full['Categoria_Cliente'].isin(cat)) & 
     (df_full['status_venda'].isin(sts)) &
     (df_full['area_atuacao_nome'].isin(area))
 ].copy()
 
-# Ordenar por Recência (Os que compraram mais recentemente primeiro, ou Inversamente)
 if 'dias_sem_compra' in df_view.columns:
     df_view = df_view.sort_values(by='dias_sem_compra', ascending=True)
 
@@ -191,30 +200,23 @@ k4.metric("Em Negociação", len(df_view[df_view['status_venda'] == 'Em Negocia�
 
 st.divider()
 
-# --- MODO DE ATAQUE (NOVA FUNCIONALIDADE) ---
+# --- MODO DE ATAQUE (Script & Wpp) ---
 st.markdown("### 🚀 Modo de Ataque (Foco)")
-
 col_sel, col_detalhe = st.columns([1, 2])
 
 with col_sel:
-    st.markdown("**1. Selecione o Alvo:**")
-    # Cria uma lista formatada para o selectbox
     df_view['label_select'] = df_view['razao_social'] + " (" + df_view['Ultima_Compra'] + ")"
-    
     opcoes_ataque = df_view['label_select'].tolist()
     selecionado = st.selectbox("Busque por Razão Social:", ["Selecione..."] + opcoes_ataque)
 
 if selecionado and selecionado != "Selecione...":
-    # Recupera dados do cliente selecionado
     cliente = df_view[df_view['label_select'] == selecionado].iloc[0]
     
-    # Preparação para Script
     dias = cliente['dias_sem_compra'] if cliente['dias_sem_compra'] < 9000 else "Muitos"
     area_cli = cliente['area_atuacao_nome']
     tel_raw = str(cliente['telefone_1'])
     tel_clean = limpar_telefone(tel_raw)
     
-    # Lógica de Script Dinâmico
     if dias != "Muitos" and dias > 30:
         script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada."
     elif "Novo" in cliente['status_venda']:
@@ -226,10 +228,10 @@ if selecionado and selecionado != "Selecione...":
         st.markdown(f"""
         <div class="foco-card">
             <h3>🏢 {cliente['razao_social']}</h3>
-            <p><b>CNPJ:</b> {cliente['cnpj']} | <b>Status Atual:</b> {cliente['status_venda']}</p>
+            <p><b>CNPJ:</b> {cliente['cnpj']} | <b>Status:</b> {cliente['status_venda']}</p>
             <p><b>📅 Última Compra:</b> {cliente['Ultima_Compra']} <span style="color:#E31937">({dias} dias atrás)</span></p>
             <hr style="border-color: #333;">
-            <p>📝 <b>Script Sugerido:</b> <i>"{script_msg}"</i></p>
+            <p>📝 <b>Script:</b> <i>"{script_msg}"</i></p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -237,11 +239,11 @@ if selecionado and selecionado != "Selecione...":
         with b1:
             if tel_clean and len(tel_clean) >= 10:
                 link_wpp = f"https://wa.me/55{tel_clean}?text={script_msg.replace(' ', '%20')}"
-                st.link_button(f"💬 Abrir WhatsApp ({tel_raw})", link_wpp, type="primary", use_container_width=True)
+                st.link_button(f"💬 WhatsApp ({tel_raw})", link_wpp, type="primary", use_container_width=True)
             else:
-                st.warning(f"Telefone inválido: {tel_raw}")
+                st.warning("Telefone inválido")
         with b2:
-            st.link_button("📧 Enviar E-mail", f"mailto:{cliente['email_1']}?subject=Oportunidade Elo&body={script_msg}", use_container_width=True)
+            st.link_button("📧 E-mail", f"mailto:{cliente['email_1']}?subject=Elo&body={script_msg}", use_container_width=True)
 
 st.divider()
 
@@ -260,8 +262,8 @@ col_config = {
         options=['Não contatado', 'Tentando Contato', 'Em Negociação', 'Fechado', 'Perdido', 'Novo'], 
         required=True
     ),
-    "ja_ligou": st.column_config.CheckboxColumn("Já Ligou?"),
-    "obs": st.column_config.TextColumn("Observações", width="large")
+    "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
+    "obs": st.column_config.TextColumn("Obs", width="large")
 }
 
 cols_display = ['pj_id', 'razao_social', 'Ultima_Compra', 'dias_sem_compra', 'telefone_1', 'status_venda', 'ja_ligou', 'obs']
@@ -275,36 +277,17 @@ df_edit = st.data_editor(
     height=500
 )
 
-# --- RODAPÉ: SALVAR E EXPORTAR ---
-c_save, c_export, c_void = st.columns([1, 1, 2])
+# --- BOTÕES FINAIS ---
+c_save, c_export = st.columns([1, 1])
 
 with c_save:
-    if st.button("💾 Salvar Tudo", type="primary"):
+    if st.button("💾 Salvar Alterações", type="primary"):
         salvar_alteracoes(df_edit, df_crm)
-        st.toast("Dados salvos com sucesso!", icon="✅")
+        st.toast("Dados Salvos!", icon="✅")
         import time
         time.sleep(1)
         st.rerun()
 
 with c_export:
     excel_data = converter_para_excel(df_edit)
-    st.download_button(
-        "📥 Baixar Planilha", 
-        data=excel_data, 
-        file_name="EloFlow_Prospeccao.xlsx", 
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-# --- GRÁFICOS INFERIORES ---
-st.markdown("---")
-g1, g2 = st.columns(2)
-with g1:
-    fig = px.pie(df_view, names='Categoria_Cliente', title="Distribuição da Carteira Filtrada", hole=0.6, color_discrete_sequence=['#E31937', '#666', '#333'])
-    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig, use_container_width=True)
-
-with g2:
-    if not df_view.empty:
-        fig2 = px.histogram(df_view, x='status_venda', title="Funil de Vendas (Status)", color_discrete_sequence=['#E31937'])
-        fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig2, use_container_width=True)
+    st.download_button("📥 Baixar Planilha", data=excel_data, file_name="EloFlow_Full.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
