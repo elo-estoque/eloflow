@@ -1,0 +1,156 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.io as pio
+from datetime import datetime
+import os
+
+# --- CONFIGURAÇÃO ---
+st.set_page_config(page_title="Elo Flow", layout="wide", page_icon="🦅")
+
+# --- CSS PERSONALIZADO ---
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+    :root {
+        --brand-dark: #050505; --brand-card: #121212; --brand-wine: #E31937;
+        --text-main: #E5E7EB; --text-muted: #9CA3AF; --border-color: rgba(255, 255, 255, 0.1);
+    }
+    .stApp { background-color: var(--brand-dark); color: var(--text-main); font-family: 'Inter', sans-serif; }
+    section[data-testid="stSidebar"] { background-color: var(--brand-card); border-right: 1px solid var(--border-color); }
+    div[data-testid="stMetric"] { background-color: var(--brand-card); border: 1px solid var(--border-color); box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+    div[data-testid="stMetricLabel"] { color: var(--text-muted); }
+    div[data-testid="stMetricValue"] { color: var(--brand-wine); font-weight: 700; }
+    div.stButton > button { background-color: var(--brand-wine); color: white; border: none; width: 100%; }
+    div.stButton > button:hover { background-color: #C2132F; box-shadow: 0 0 10px rgba(227, 25, 55, 0.5); color: white;}
+    div[data-testid="stDataEditor"] { border: 1px solid var(--border-color); border-radius: 8px; background-color: var(--brand-card); }
+    h1, h2, h3 { color: var(--text-main) !important; }
+    .block-container { padding-top: 2rem; }
+</style>
+""", unsafe_allow_html=True)
+
+pio.templates.default = "plotly_dark"
+
+# --- BANCO DE DADOS ---
+DB_FILE = "/app/data/db_elo_flow.csv" # Caminho seguro para volume
+
+def carregar_crm_db():
+    # Se a pasta não existir, cria (para evitar erro na primeira vez)
+    os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
+    
+    if os.path.exists(DB_FILE):
+        return pd.read_csv(DB_FILE, dtype={'pj_id': str})
+    else:
+        return pd.DataFrame(columns=['pj_id', 'status_venda', 'ja_ligou', 'obs', 'data_interacao'])
+
+def salvar_alteracoes(df_editor, df_original_crm):
+    novos_dados = df_editor[['pj_id', 'status_venda', 'ja_ligou', 'obs']].copy()
+    novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    crm_atualizado = df_original_crm[~df_original_crm['pj_id'].isin(novos_dados['pj_id'])]
+    crm_final = pd.concat([crm_atualizado, novos_dados], ignore_index=True)
+    crm_final.to_csv(DB_FILE, index=False)
+    return crm_final
+
+# --- SIDEBAR ---
+st.sidebar.markdown(f"<h2 style='color: #E31937; text-align: center; margin-bottom: 0;'>ELO FLOW</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<p style='text-align: center; color: #666; font-size: 0.8rem;'>Intelligence System</p>", unsafe_allow_html=True)
+st.sidebar.markdown("---")
+uploaded_file = st.sidebar.file_uploader("📂 Importar Planilha", type=["xlsx"])
+
+# --- CARREGAMENTO ---
+@st.cache_data
+def carregar_excel(file):
+    try:
+        xls = pd.ExcelFile(file)
+        dfs = []
+        for sheet_name in xls.sheet_names:
+            name_upper = sheet_name.upper()
+            categoria = "Outros"
+            if "ATIVO" in name_upper: categoria = "Ativos (2025)"
+            elif "INATIVO" in name_upper: categoria = "Inativos (2020-2024)"
+            elif "FRIO" in name_upper: categoria = "Frios (<2020)"
+            df = pd.read_excel(xls, sheet_name=sheet_name)
+            df['Categoria_Cliente'] = categoria
+            dfs.append(df)
+        return pd.concat(dfs, ignore_index=True)
+    except Exception as e:
+        st.error(f"Erro: {e}")
+        return None
+
+if not uploaded_file:
+    st.info("👆 Importe a planilha para começar.")
+    st.stop()
+
+df_raw = carregar_excel(uploaded_file)
+
+if df_raw is not None:
+    if 'pj_id' in df_raw.columns:
+        df_raw['pj_id'] = df_raw['pj_id'].astype(str)
+    else:
+        st.error("Erro: Coluna 'pj_id' obrigatória.")
+        st.stop()
+
+    df_crm = carregar_crm_db()
+    
+    # Merge e Tratamento
+    df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
+    df_full['status_venda'] = df_full['status_venda'].fillna('Novo')
+    df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
+    df_full['obs'] = df_full['obs'].fillna('')
+    
+    # Detecção de novos
+    ids_excel = set(df_raw['pj_id'])
+    ids_crm = set(df_crm['pj_id'])
+    novos = len(ids_excel - ids_crm)
+
+    # --- DASHBOARD ---
+    st.title("🦅 Visão Geral")
+    if novos > 0:
+        st.success(f"🔔 Radar: {novos} novos clientes detectados!")
+
+    c1, c2 = st.columns(2)
+    cat = c1.multiselect("Categoria", df_full['Categoria_Cliente'].unique(), default=df_full['Categoria_Cliente'].unique())
+    sts = c2.multiselect("Status", df_full['status_venda'].unique(), default=df_full['status_venda'].unique())
+    
+    df_view = df_full[(df_full['Categoria_Cliente'].isin(cat)) & (df_full['status_venda'].isin(sts))]
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total", len(df_view))
+    k2.metric("Fechados", len(df_view[df_view['status_venda'] == 'Fechado']))
+    k3.metric("Falta Contatar", len(df_view[df_view['ja_ligou'] == False]))
+    k4.metric("Negociando", len(df_view[df_view['status_venda'] == 'Em Negociação']))
+
+    st.markdown("---")
+    
+    # Gráficos
+    g1, g2 = st.columns(2)
+    with g1:
+        if 'estado' in df_view.columns:
+             fig = px.bar(df_view['estado'].value_counts().reset_index(), x='estado', y='count', title="Estados", color_discrete_sequence=['#E31937'])
+             fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+             st.plotly_chart(fig, use_container_width=True)
+    with g2:
+        fig2 = px.pie(df_view, names='Categoria_Cliente', title="Distribuição", hole=0.5, color_discrete_sequence=['#E31937', '#666', '#333'])
+        fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # CRM
+    st.subheader("🎯 Lista de Ataque")
+    conf = {
+        "pj_id": st.column_config.TextColumn("ID", disabled=True),
+        "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
+        "status_venda": st.column_config.SelectboxColumn("Status", options=['Novo', 'Tentando Contato', 'Em Negociação', 'Fechado', 'Perdido'], required=True),
+        "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
+        "obs": st.column_config.TextColumn("Obs", width="large")
+    }
+    cols = ['pj_id', 'razao_social', 'Categoria_Cliente', 'status_venda', 'ja_ligou', 'obs']
+    if 'telefone_1' in df_view.columns: cols.insert(2, 'telefone_1')
+
+    df_edit = st.data_editor(df_view[cols], column_config=conf, hide_index=True, use_container_width=True, key="crm", height=500)
+
+    if st.button("💾 Salvar", type="primary"):
+        salvar_alteracoes(df_edit, df_crm)
+        st.toast("Salvo!", icon="✅")
+        import time
+        time.sleep(1)
+        st.rerun()
