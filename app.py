@@ -5,6 +5,7 @@ import plotly.io as pio
 from datetime import datetime
 import os
 import io
+import urllib.parse # Biblioteca nova para formatar links do Gmail
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Elo Flow - Prospecção", layout="wide", page_icon="🦅")
@@ -43,12 +44,12 @@ st.markdown("""
 pio.templates.default = "plotly_dark"
 
 # --- CONFIGURAÇÃO DE PASTAS E ARQUIVOS ---
-DATA_DIR = "/app/data" # Diretório persistente
+DATA_DIR = "/app/data" 
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
-DB_FILE = os.path.join(DATA_DIR, "db_elo_flow.csv")        # Histórico de interações
-CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")    # Arquivo Excel Salvo
+DB_FILE = os.path.join(DATA_DIR, "db_elo_flow.csv")        
+CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")    
 
 # --- FUNÇÕES DE PERSISTÊNCIA ---
 def carregar_crm_db():
@@ -61,7 +62,6 @@ def salvar_alteracoes(df_editor, df_original_crm):
     novos_dados = df_editor[['pj_id', 'status_venda', 'ja_ligou', 'obs']].copy()
     novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Atualiza removendo duplicatas antigas
     crm_atualizado = df_original_crm[~df_original_crm['pj_id'].isin(novos_dados['pj_id'])]
     crm_final = pd.concat([crm_atualizado, novos_dados], ignore_index=True)
     
@@ -82,9 +82,7 @@ def limpar_telefone(phone):
 st.sidebar.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-# Verifica se existe arquivo em cache
 arquivo_carregado = None
-usando_cache = False
 
 if os.path.exists(CACHE_FILE):
     st.sidebar.success("✅ Lista carregada da memória!")
@@ -92,14 +90,12 @@ if os.path.exists(CACHE_FILE):
         os.remove(CACHE_FILE)
         st.rerun()
     arquivo_carregado = CACHE_FILE
-    usando_cache = True
 else:
     uploaded_file = st.sidebar.file_uploader("📂 Importar Nova Tabela (.xlsx)", type=["xlsx"])
     if uploaded_file:
-        # Salva o arquivo no disco para persistir
         with open(CACHE_FILE, "wb") as f:
             f.write(uploaded_file.getbuffer())
-        st.rerun() # Recarrega para usar o arquivo salvo
+        st.rerun() 
 
 # --- LEITURA E PROCESSAMENTO ---
 @st.cache_data
@@ -147,7 +143,6 @@ df_raw = carregar_excel(arquivo_carregado)
 
 if df_raw is None or df_raw.empty:
     st.error("Erro ao ler o arquivo. Tente clicar em 'Trocar Lista' e enviar novamente.")
-    # Se der erro grave, remove o cache pra não travar o app
     if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
     st.stop()
 
@@ -158,17 +153,14 @@ else:
     st.error("Erro: Coluna 'pj_id' obrigatória.")
     st.stop()
 
-# Tratamento CNPJ
 if 'cnpj' in df_raw.columns:
     df_raw['cnpj'] = df_raw['cnpj'].astype(str).str.replace(r'\.0$', '', regex=True)
 else:
     df_raw['cnpj'] = "-"
 
-# Merge com CRM
 df_crm = carregar_crm_db()
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 
-# Preenche vazios
 df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
 df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
 df_full['obs'] = df_full['obs'].fillna('')
@@ -176,7 +168,6 @@ df_full['obs'] = df_full['obs'].fillna('')
 # --- DASHBOARD ---
 st.title("🦅 Visão Geral - Carteira")
 
-# Filtros Inteligentes (Persistem a seleção se possível, ou resetam)
 c1, c2, c3 = st.columns(3)
 cat = c1.multiselect("Categoria", df_full['Categoria_Cliente'].unique(), default=df_full['Categoria_Cliente'].unique())
 sts = c2.multiselect("Status", df_full['status_venda'].unique(), default=df_full['status_venda'].unique())
@@ -191,7 +182,6 @@ df_view = df_full[
 if 'dias_sem_compra' in df_view.columns:
     df_view = df_view.sort_values(by='dias_sem_compra', ascending=True)
 
-# KPIs
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Total Visível", len(df_view))
 k2.metric("Oportunidades (Inativos)", len(df_view[df_view['Categoria_Cliente'].str.contains('Inativo')]))
@@ -200,7 +190,7 @@ k4.metric("Em Negociação", len(df_view[df_view['status_venda'] == 'Em Negocia�
 
 st.divider()
 
-# --- MODO DE ATAQUE (Script & Wpp) ---
+# --- MODO DE ATAQUE (Script & Gmail) ---
 st.markdown("### 🚀 Modo de Ataque (Foco)")
 col_sel, col_detalhe = st.columns([1, 2])
 
@@ -242,8 +232,22 @@ if selecionado and selecionado != "Selecione...":
                 st.link_button(f"💬 WhatsApp ({tel_raw})", link_wpp, type="primary", use_container_width=True)
             else:
                 st.warning("Telefone inválido")
+        
         with b2:
-            st.link_button("📧 E-mail", f"mailto:{cliente['email_1']}?subject=Elo&body={script_msg}", use_container_width=True)
+            # --- LÓGICA DO GMAIL ---
+            # Monta os parâmetros da URL do Gmail
+            params = {
+                "view": "cm",         # cm = compose mode (modo escrever)
+                "fs": "1",            # fs = full screen (tela cheia)
+                "to": str(cliente['email_1']),
+                "su": "Oportunidade - Parceria Elo",
+                "body": script_msg
+            }
+            # Codifica os parâmetros para serem seguros na URL
+            query_string = urllib.parse.urlencode(params)
+            link_gmail = f"https://mail.google.com/mail/?{query_string}"
+            
+            st.link_button("📧 Abrir Gmail", link_gmail, use_container_width=True)
 
 st.divider()
 
@@ -277,7 +281,7 @@ df_edit = st.data_editor(
     height=500
 )
 
-# --- BOTÕES FINAIS ---
+# --- RODAPÉ ---
 c_save, c_export = st.columns([1, 1])
 
 with c_save:
