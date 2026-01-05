@@ -1,0 +1,13 @@
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+baseUrlPath = "eloflow"
+port = 8501
+
+[theme]
+base = "dark"
+primaryColor = "#E31937"
+backgroundColor = "#050505"
+secondaryBackgroundColor = "#121212"
+textColor = "#E5E7EB"
