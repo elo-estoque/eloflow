@@ -5,7 +5,7 @@ import plotly.io as pio
 from datetime import datetime
 import os
 import io
-import urllib.parse # Biblioteca nova para formatar links do Gmail
+import urllib.parse
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Elo Flow - Prospecção", layout="wide", page_icon="🦅")
@@ -20,17 +20,14 @@ st.markdown("""
     }
     .stApp { background-color: var(--brand-dark); color: var(--text-main); font-family: 'Inter', sans-serif; }
     
-    /* Sidebar e Cards */
     section[data-testid="stSidebar"] { background-color: var(--brand-card); border-right: 1px solid var(--border-color); }
     div[data-testid="stMetric"] { background-color: var(--brand-card); border: 1px solid var(--border-color); padding: 10px; border-radius: 8px; }
     div[data-testid="stMetricLabel"] { color: var(--text-muted); }
     div[data-testid="stMetricValue"] { color: var(--brand-wine); font-weight: 700; }
     
-    /* Botões */
     div.stButton > button { background-color: var(--brand-wine); color: white; border: none; width: 100%; border-radius: 6px; }
     div.stButton > button:hover { background-color: #C2132F; color: white; border-color: #C2132F; }
     
-    /* Estilo do Card de Modo Foco */
     .foco-card {
         background-color: #1A1A1A;
         padding: 20px;
@@ -51,7 +48,7 @@ if not os.path.exists(DATA_DIR):
 DB_FILE = os.path.join(DATA_DIR, "db_elo_flow.csv")        
 CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")    
 
-# --- FUNÇÕES DE PERSISTÊNCIA ---
+# --- FUNÇÕES ---
 def carregar_crm_db():
     if os.path.exists(DB_FILE):
         return pd.read_csv(DB_FILE, dtype={'pj_id': str})
@@ -78,7 +75,7 @@ def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
-# --- SIDEBAR & UPLOAD PERSISTENTE ---
+# --- SIDEBAR ---
 st.sidebar.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
@@ -97,7 +94,7 @@ else:
             f.write(uploaded_file.getbuffer())
         st.rerun() 
 
-# --- LEITURA E PROCESSAMENTO ---
+# --- LEITURA ---
 @st.cache_data
 def carregar_excel(path_or_file):
     try:
@@ -123,6 +120,7 @@ def carregar_excel(path_or_file):
                 df['Ultima_Compra'] = "-"
                 df['dias_sem_compra'] = 9999
             
+            # Garante colunas essenciais
             cols_check = {'area_atuacao_nome': 'Indefinido', 'telefone_1': '', 'email_1': ''}
             for col, val in cols_check.items():
                 if col not in df.columns: df[col] = val
@@ -142,11 +140,10 @@ if not arquivo_carregado:
 df_raw = carregar_excel(arquivo_carregado)
 
 if df_raw is None or df_raw.empty:
-    st.error("Erro ao ler o arquivo. Tente clicar em 'Trocar Lista' e enviar novamente.")
+    st.error("Erro ao ler o arquivo.")
     if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
     st.stop()
 
-# Garantir ID como string
 if 'pj_id' in df_raw.columns:
     df_raw['pj_id'] = df_raw['pj_id'].astype(str)
 else:
@@ -190,7 +187,7 @@ k4.metric("Em Negociação", len(df_view[df_view['status_venda'] == 'Em Negocia�
 
 st.divider()
 
-# --- MODO DE ATAQUE (Script & Gmail) ---
+# --- MODO DE ATAQUE (Foco) ---
 st.markdown("### 🚀 Modo de Ataque (Foco)")
 col_sel, col_detalhe = st.columns([1, 2])
 
@@ -205,6 +202,7 @@ if selecionado and selecionado != "Selecione...":
     dias = cliente['dias_sem_compra'] if cliente['dias_sem_compra'] < 9000 else "Muitos"
     area_cli = cliente['area_atuacao_nome']
     tel_raw = str(cliente['telefone_1'])
+    email_cliente = str(cliente['email_1']).strip() # Garante string limpa
     tel_clean = limpar_telefone(tel_raw)
     
     if dias != "Muitos" and dias > 30:
@@ -218,7 +216,7 @@ if selecionado and selecionado != "Selecione...":
         st.markdown(f"""
         <div class="foco-card">
             <h3>🏢 {cliente['razao_social']}</h3>
-            <p><b>CNPJ:</b> {cliente['cnpj']} | <b>Status:</b> {cliente['status_venda']}</p>
+            <p><b>CNPJ:</b> {cliente['cnpj']} | <b>Área:</b> {cliente['area_atuacao_nome']}</p>
             <p><b>📅 Última Compra:</b> {cliente['Ultima_Compra']} <span style="color:#E31937">({dias} dias atrás)</span></p>
             <hr style="border-color: #333;">
             <p>📝 <b>Script:</b> <i>"{script_msg}"</i></p>
@@ -234,30 +232,33 @@ if selecionado and selecionado != "Selecione...":
                 st.warning("Telefone inválido")
         
         with b2:
-            # --- LÓGICA DO GMAIL ---
-            # Monta os parâmetros da URL do Gmail
-            params = {
-                "view": "cm",         # cm = compose mode (modo escrever)
-                "fs": "1",            # fs = full screen (tela cheia)
-                "to": str(cliente['email_1']),
-                "su": "Oportunidade - Parceria Elo",
-                "body": script_msg
-            }
-            # Codifica os parâmetros para serem seguros na URL
-            query_string = urllib.parse.urlencode(params)
-            link_gmail = f"https://mail.google.com/mail/?{query_string}"
-            
-            st.link_button("📧 Abrir Gmail", link_gmail, use_container_width=True)
+            # Lógica corrigida do Gmail
+            if email_cliente and email_cliente.lower() != "nan" and "@" in email_cliente:
+                params = {
+                    "view": "cm",
+                    "fs": "1",
+                    "to": email_cliente, # Agora puxa direto da variável limpa
+                    "su": "Oportunidade - Parceria Elo",
+                    "body": script_msg
+                }
+                query_string = urllib.parse.urlencode(params)
+                link_gmail = f"https://mail.google.com/mail/?{query_string}"
+                st.link_button(f"📧 Gmail ({email_cliente})", link_gmail, use_container_width=True)
+            else:
+                st.warning("E-mail não cadastrado")
 
 st.divider()
 
 # --- TABELA DE TRABALHO ---
 st.subheader("📋 Lista de Prospecção")
 
+# Configuração das colunas (Restauradas)
 col_config = {
     "pj_id": st.column_config.TextColumn("ID", disabled=True),
     "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
     "cnpj": st.column_config.TextColumn("CNPJ", disabled=True),
+    "area_atuacao_nome": st.column_config.TextColumn("Área", disabled=True),
+    "email_1": st.column_config.TextColumn("E-mail", disabled=True),
     "Ultima_Compra": st.column_config.TextColumn("Última Compra", disabled=True),
     "dias_sem_compra": st.column_config.NumberColumn("Dias Inativo", format="%d dias"),
     "telefone_1": st.column_config.TextColumn("Telefone", disabled=True),
@@ -270,7 +271,20 @@ col_config = {
     "obs": st.column_config.TextColumn("Obs", width="large")
 }
 
-cols_display = ['pj_id', 'razao_social', 'Ultima_Compra', 'dias_sem_compra', 'telefone_1', 'status_venda', 'ja_ligou', 'obs']
+# Ordem Completa das Colunas
+cols_display = [
+    'pj_id', 
+    'razao_social', 
+    'cnpj', 
+    'area_atuacao_nome',  # Adicionado
+    'email_1',            # Adicionado
+    'Ultima_Compra', 
+    'dias_sem_compra', 
+    'telefone_1', 
+    'status_venda', 
+    'ja_ligou', 
+    'obs'
+]
 
 df_edit = st.data_editor(
     df_view[cols_display], 
