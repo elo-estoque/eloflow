@@ -6,9 +6,10 @@ from datetime import datetime
 import os
 import io
 
-# --- CONFIGURAÇÃO VISUAL ---
+# --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Elo Flow", layout="wide", page_icon="🦅")
 
+# --- CSS (Visual Dark/Red) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -24,14 +25,18 @@ st.markdown("""
     div.stButton > button { background-color: var(--brand-wine); color: white; border: none; width: 100%; }
     div.stButton > button:hover { background-color: #C2132F; color: white; }
     h1, h2, h3 { color: var(--text-main) !important; }
+    
+    /* Destaque Vermelho na Data */
+    div[data-testid="stDataEditor"] div[role="gridcell"][data-testid*="Ultima_Compra"] {
+        color: #E31937;
+        font-weight: bold; 
+    }
 </style>
 """, unsafe_allow_html=True)
 
 pio.templates.default = "plotly_dark"
 
-# --- BANCO DE DADOS INTERNO ---
-# Usamos CSV interno apenas para velocidade do sistema salvar rápido, 
-# mas o usuário só vê e interage com EXCEL.
+# --- PERSISTÊNCIA ---
 DB_FILE = "/app/data/db_elo_flow.csv"
 
 def carregar_crm_db():
@@ -55,36 +60,46 @@ def converter_para_excel(df):
         df.to_excel(writer, index=False, sheet_name='EloFlow_Dados')
     return output.getvalue()
 
-# --- SIDEBAR (UPLOAD XLSX) ---
+# --- SIDEBAR ---
 st.sidebar.markdown(f"<h2 style='color: #E31937; text-align: center;'>ELO FLOW</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
-# AQUI: Aceita apenas XLSX
 uploaded_file = st.sidebar.file_uploader("📂 Importar Tabela (.xlsx)", type=["xlsx"])
 
-# --- LEITURA DO EXCEL (ABAS) ---
+# --- LEITURA DO EXCEL (CORRIGIDA) ---
 @st.cache_data
 def carregar_excel(file):
     try:
-        # Lê o arquivo Excel carregado na memória
         xls = pd.ExcelFile(file)
         dfs = []
-        # Percorre todas as abas procurando as palavras chaves
         for sheet_name in xls.sheet_names:
             name_upper = sheet_name.upper()
             categoria = "Outros"
             
+            # Identifica Categoria pela Aba
             if "ATIVO" in name_upper: categoria = "Ativos (2025)"
             elif "INATIVO" in name_upper: categoria = "Inativos (2020-2024)"
             elif "FRIO" in name_upper: categoria = "Frios (<2020)"
             
-            # Lê a aba específica
             df = pd.read_excel(xls, sheet_name=sheet_name)
             df['Categoria_Cliente'] = categoria
+            
+            # --- TRATAMENTO DA DATA (O ERRO ESTAVA AQUI) ---
+            # Procura coluna DATA_EXIBICAO
+            if 'DATA_EXIBICAO' in df.columns:
+                # Converte para data real para poder ordenar (dayfirst=True para formato BR)
+                # 'coerce' transforma o traço "-" e erros em NaT (Not a Time)
+                df['data_temp'] = pd.to_datetime(df['DATA_EXIBICAO'], errors='coerce', dayfirst=True)
+                
+                # Cria a coluna bonita (String) para mostrar na tabela
+                df['Ultima_Compra'] = df['data_temp'].dt.strftime('%d/%m/%Y').fillna("-")
+            else:
+                df['Ultima_Compra'] = "-"
+                
             dfs.append(df)
             
         return pd.concat(dfs, ignore_index=True)
     except Exception as e:
-        st.error(f"Erro ao ler o arquivo Excel: {e}")
+        st.error(f"Erro ao processar Excel: {e}")
         return None
 
 if not uploaded_file:
@@ -95,16 +110,13 @@ if not uploaded_file:
 df_raw = carregar_excel(uploaded_file)
 
 if df_raw is not None:
-    # Garante ID como texto
     if 'pj_id' in df_raw.columns:
         df_raw['pj_id'] = df_raw['pj_id'].astype(str)
     else:
-        st.error("Erro: A coluna 'pj_id' não foi encontrada na sua planilha.")
+        st.error("Erro: Coluna 'pj_id' não encontrada.")
         st.stop()
 
     df_crm = carregar_crm_db()
-    
-    # Cruzamento de dados
     df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
     df_full['status_venda'] = df_full['status_venda'].fillna('Novo')
     df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
@@ -120,7 +132,11 @@ if df_raw is not None:
     
     df_view = df_full[(df_full['Categoria_Cliente'].isin(cat)) & (df_full['status_venda'].isin(sts))]
 
-    # Métricas
+    # Ordenar por Data (Mais recente primeiro) se existir
+    if 'data_temp' in df_view.columns:
+        df_view = df_view.sort_values(by='data_temp', ascending=False)
+
+    # KPIs
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Total", len(df_view))
     k2.metric("Fechados", len(df_view[df_view['status_venda'] == 'Fechado']))
@@ -141,20 +157,23 @@ if df_raw is not None:
         fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig2, use_container_width=True)
 
-    # --- CRM (TABELA) ---
+    # --- TABELA PRINCIPAL ---
     st.subheader("🎯 Lista de Trabalho")
     
+    # Configuração das colunas
     conf = {
         "pj_id": st.column_config.TextColumn("ID", disabled=True),
         "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
+        # AQUI: Coluna Ultima Compra vindo do Excel
+        "Ultima_Compra": st.column_config.TextColumn("Última Compra", disabled=True, help="Data extraída da planilha"),
         "status_venda": st.column_config.SelectboxColumn("Status", options=['Novo', 'Tentando Contato', 'Em Negociação', 'Fechado', 'Perdido'], required=True),
         "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
         "obs": st.column_config.TextColumn("Obs", width="large")
     }
     
-    cols = ['pj_id', 'razao_social', 'Categoria_Cliente', 'status_venda', 'ja_ligou', 'obs']
-    # Adiciona telefone se existir na planilha
-    if 'telefone_1' in df_view.columns: cols.insert(2, 'telefone_1')
+    cols = ['pj_id', 'razao_social', 'Ultima_Compra', 'Categoria_Cliente', 'status_venda', 'ja_ligou', 'obs']
+    
+    if 'telefone_1' in df_view.columns: cols.insert(3, 'telefone_1')
     
     df_edit = st.data_editor(
         df_view[cols], 
@@ -162,25 +181,23 @@ if df_raw is not None:
         hide_index=True, 
         use_container_width=True, 
         key="crm", 
-        height=500
+        height=600
     )
 
     c_save, c_export = st.columns([1, 1])
-    
     with c_save:
         if st.button("💾 Salvar Alterações", type="primary"):
             salvar_alteracoes(df_edit, df_crm)
-            st.toast("Dados salvos no sistema!", icon="✅")
+            st.toast("Salvo!", icon="✅")
             import time
             time.sleep(1)
             st.rerun()
             
     with c_export:
-        # Botão para baixar tudo em EXCEL
         excel_data = converter_para_excel(df_edit)
         st.download_button(
             label="📥 Baixar Tabela Atualizada (.xlsx)",
             data=excel_data,
-            file_name=f"EloFlow_Export_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
+            file_name=f"EloFlow_Export.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
