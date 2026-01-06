@@ -40,7 +40,7 @@ st.markdown("""
 
 pio.templates.default = "plotly_dark"
 
-# --- CONFIGURAÇÃO DE PASTAS E ARQUIVOS ---
+# --- CONFIGURAÇÃO DE PASTAS ---
 DATA_DIR = "/app/data" 
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
@@ -59,6 +59,9 @@ def salvar_alteracoes(df_editor, df_original_crm):
     novos_dados = df_editor[['pj_id', 'status_venda', 'ja_ligou', 'obs']].copy()
     novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    # Remove duplicatas baseadas no ID para garantir integridade
+    novos_dados = novos_dados.drop_duplicates(subset=['pj_id'], keep='last')
+    
     crm_atualizado = df_original_crm[~df_original_crm['pj_id'].isin(novos_dados['pj_id'])]
     crm_final = pd.concat([crm_atualizado, novos_dados], ignore_index=True)
     
@@ -75,26 +78,7 @@ def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
-# --- SIDEBAR ---
-st.sidebar.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
-st.sidebar.markdown("---")
-
-arquivo_carregado = None
-
-if os.path.exists(CACHE_FILE):
-    st.sidebar.success("✅ Lista carregada da memória!")
-    if st.sidebar.button("🗑️ Trocar Lista/Arquivo"):
-        os.remove(CACHE_FILE)
-        st.rerun()
-    arquivo_carregado = CACHE_FILE
-else:
-    uploaded_file = st.sidebar.file_uploader("📂 Importar Nova Tabela (.xlsx)", type=["xlsx"])
-    if uploaded_file:
-        with open(CACHE_FILE, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.rerun() 
-
-# --- LEITURA ---
+# --- LEITURA DO EXCEL (COM CORREÇÃO DE CACHE E DUPLICATAS) ---
 @st.cache_data
 def carregar_excel(path_or_file):
     try:
@@ -111,6 +95,7 @@ def carregar_excel(path_or_file):
             df = pd.read_excel(xls, sheet_name=sheet_name)
             df['Categoria_Cliente'] = categoria
             
+            # Tratamento de Data
             if 'DATA_EXIBICAO' in df.columns:
                 df['data_temp'] = pd.to_datetime(df['DATA_EXIBICAO'], errors='coerce', dayfirst=True)
                 df['Ultima_Compra'] = df['data_temp'].dt.strftime('%d/%m/%Y').fillna("-")
@@ -121,17 +106,56 @@ def carregar_excel(path_or_file):
                 df['dias_sem_compra'] = 9999
             
             # Garante colunas essenciais
-            cols_check = {'area_atuacao_nome': 'Indefinido', 'telefone_1': '', 'email_1': ''}
+            cols_check = {'area_atuacao_nome': 'Indefinido', 'telefone_1': '', 'email_1': '', 'pj_id': ''}
             for col, val in cols_check.items():
                 if col not in df.columns: df[col] = val
                 else: df[col] = df[col].fillna(val)
 
+            # Força ID como string para evitar erro de duplicata numérica vs texto
+            df['pj_id'] = df['pj_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+
             dfs.append(df)
             
         if not dfs: return None
-        return pd.concat(dfs, ignore_index=True)
+        
+        df_final = pd.concat(dfs, ignore_index=True)
+        
+        # --- CORREÇÃO DE DUPLICATAS ---
+        # Remove linhas onde o 'pj_id' é igual, mantendo a primeira ocorrência
+        df_final = df_final.drop_duplicates(subset=['pj_id'], keep='first')
+        
+        return df_final
+
     except Exception as e:
         return None
+
+# --- SIDEBAR & UPLOAD ---
+st.sidebar.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("---")
+
+arquivo_carregado = None
+
+if os.path.exists(CACHE_FILE):
+    st.sidebar.success("✅ Lista carregada da memória!")
+    
+    # --- CORREÇÃO DO PROBLEMA DE NÃO ATUALIZAR ---
+    if st.sidebar.button("🗑️ Trocar Lista/Arquivo"):
+        try:
+            os.remove(CACHE_FILE)         # Deleta o arquivo físico
+            carregar_excel.clear()        # Limpa o cache da memória RAM do Streamlit
+            st.rerun()                    # Recarrega a página
+        except:
+            pass # Ignora erro se arquivo já não existir
+            
+    arquivo_carregado = CACHE_FILE
+else:
+    uploaded_file = st.sidebar.file_uploader("📂 Importar Nova Tabela (.xlsx)", type=["xlsx"])
+    if uploaded_file:
+        # Salva o arquivo no disco
+        with open(CACHE_FILE, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        carregar_excel.clear() # Limpa cache antigo ao subir novo
+        st.rerun()
 
 if not arquivo_carregado:
     st.info("👆 Por favor, importe a planilha na barra lateral.")
@@ -140,24 +164,23 @@ if not arquivo_carregado:
 df_raw = carregar_excel(arquivo_carregado)
 
 if df_raw is None or df_raw.empty:
-    st.error("Erro ao ler o arquivo.")
-    if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
+    st.error("Erro ao ler o arquivo. Tente clicar em 'Trocar Lista' e enviar novamente.")
+    if os.path.exists(CACHE_FILE): 
+        os.remove(CACHE_FILE)
+        carregar_excel.clear()
     st.stop()
 
-if 'pj_id' in df_raw.columns:
-    df_raw['pj_id'] = df_raw['pj_id'].astype(str)
-else:
-    st.error("Erro: Coluna 'pj_id' obrigatória.")
-    st.stop()
-
+# Tratamento CNPJ e ID
 if 'cnpj' in df_raw.columns:
     df_raw['cnpj'] = df_raw['cnpj'].astype(str).str.replace(r'\.0$', '', regex=True)
 else:
     df_raw['cnpj'] = "-"
 
+# Merge com CRM
 df_crm = carregar_crm_db()
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 
+# Preenche vazios
 df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
 df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
 df_full['obs'] = df_full['obs'].fillna('')
@@ -193,16 +216,18 @@ col_sel, col_detalhe = st.columns([1, 2])
 
 with col_sel:
     df_view['label_select'] = df_view['razao_social'] + " (" + df_view['Ultima_Compra'] + ")"
-    opcoes_ataque = df_view['label_select'].tolist()
+    # Remove duplicatas na lista de seleção também, por segurança
+    opcoes_ataque = sorted(list(set(df_view['label_select'].tolist())))
     selecionado = st.selectbox("Busque por Razão Social:", ["Selecione..."] + opcoes_ataque)
 
 if selecionado and selecionado != "Selecione...":
+    # Pega o primeiro registro encontrado (evita erro se houver duplicata residual)
     cliente = df_view[df_view['label_select'] == selecionado].iloc[0]
     
     dias = cliente['dias_sem_compra'] if cliente['dias_sem_compra'] < 9000 else "Muitos"
     area_cli = cliente['area_atuacao_nome']
     tel_raw = str(cliente['telefone_1'])
-    email_cliente = str(cliente['email_1']).strip() # Garante string limpa
+    email_cliente = str(cliente['email_1']).strip()
     tel_clean = limpar_telefone(tel_raw)
     
     if dias != "Muitos" and dias > 30:
@@ -232,12 +257,11 @@ if selecionado and selecionado != "Selecione...":
                 st.warning("Telefone inválido")
         
         with b2:
-            # Lógica corrigida do Gmail
             if email_cliente and email_cliente.lower() != "nan" and "@" in email_cliente:
                 params = {
                     "view": "cm",
                     "fs": "1",
-                    "to": email_cliente, # Agora puxa direto da variável limpa
+                    "to": email_cliente,
                     "su": "Oportunidade - Parceria Elo",
                     "body": script_msg
                 }
@@ -252,7 +276,6 @@ st.divider()
 # --- TABELA DE TRABALHO ---
 st.subheader("📋 Lista de Prospecção")
 
-# Configuração das colunas (Restauradas)
 col_config = {
     "pj_id": st.column_config.TextColumn("ID", disabled=True),
     "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
@@ -271,19 +294,10 @@ col_config = {
     "obs": st.column_config.TextColumn("Obs", width="large")
 }
 
-# Ordem Completa das Colunas
 cols_display = [
-    'pj_id', 
-    'razao_social', 
-    'cnpj', 
-    'area_atuacao_nome',  # Adicionado
-    'email_1',            # Adicionado
-    'Ultima_Compra', 
-    'dias_sem_compra', 
-    'telefone_1', 
-    'status_venda', 
-    'ja_ligou', 
-    'obs'
+    'pj_id', 'razao_social', 'cnpj', 'area_atuacao_nome', 'email_1', 
+    'Ultima_Compra', 'dias_sem_compra', 'telefone_1', 
+    'status_venda', 'ja_ligou', 'obs'
 ]
 
 df_edit = st.data_editor(
