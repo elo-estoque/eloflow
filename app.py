@@ -59,13 +59,9 @@ def salvar_alteracoes(df_editor, df_original_crm):
     novos_dados = df_editor[['pj_id', 'status_venda', 'ja_ligou', 'obs']].copy()
     novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # --- CORREÇÃO AQUI ---
-    # Removida a linha que apagava duplicatas pelo ID. 
-    # Agora só apaga se a linha for 100% igual (duplicata real de erro)
+    # Remove apenas duplicatas exatas (lixo), mantém IDs repetidos se forem filiais diferentes
     novos_dados = novos_dados.drop_duplicates()
     
-    # Atualiza o banco de dados
-    # Atenção: Se houver múltiplos IDs iguais, remove todos os antigos e insere os novos editados
     crm_atualizado = df_original_crm[~df_original_crm['pj_id'].isin(novos_dados['pj_id'])]
     crm_final = pd.concat([crm_atualizado, novos_dados], ignore_index=True)
     
@@ -82,7 +78,7 @@ def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
-# --- LEITURA DO EXCEL (CORRIGIDA - SEM FILTRO DE ID) ---
+# --- LEITURA DO EXCEL ---
 @st.cache_data
 def carregar_excel(path_or_file):
     try:
@@ -124,11 +120,7 @@ def carregar_excel(path_or_file):
         if not dfs: return None
         
         df_final = pd.concat(dfs, ignore_index=True)
-        
-        # --- CORREÇÃO FINAL DA CONTAGEM ---
-        # Removi o drop_duplicates(subset=['pj_id']).
-        # Agora ele só remove se a linha inteira for duplicada (lixo).
-        # Se tiver mesmo ID mas for outra filial, ELE MANTÉM.
+        # Mantém todas as linhas do Excel, removendo apenas duplicatas literais de erro
         df_final = df_final.drop_duplicates() 
         
         return df_final
@@ -182,8 +174,6 @@ else:
 
 # Merge com CRM
 df_crm = carregar_crm_db()
-
-# Merge ajustado para não duplicar se o banco tiver sujeira, mas mantendo a fidelidade do Excel
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 
 df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
@@ -196,8 +186,23 @@ st.title("🦅 Visão Geral - Carteira")
 c1, c2, c3 = st.columns(3)
 cat = c1.multiselect("Categoria", df_full['Categoria_Cliente'].unique(), default=df_full['Categoria_Cliente'].unique())
 sts = c2.multiselect("Status", df_full['status_venda'].unique(), default=df_full['status_venda'].unique())
-area = c3.multiselect("Área", df_full['area_atuacao_nome'].unique(), default=df_full['area_atuacao_nome'].unique())
 
+# --- LÓGICA DO FILTRO "TODAS AS ÁREAS" ---
+with c3:
+    todas_areas_opcoes = df_full['area_atuacao_nome'].unique()
+    
+    # Checkbox de controle rápido
+    usar_todas = st.checkbox("Selecionar Todas as Áreas", value=True)
+    
+    if usar_todas:
+        area = todas_areas_opcoes
+        # Mostra o select desativado (cinza) mas preenchido, para o usuário ver
+        st.multiselect("Área", options=todas_areas_opcoes, default=todas_areas_opcoes, disabled=True)
+    else:
+        # Se desmarcar, libera o select normal (começando com tudo selecionado para facilitar a exclusão de poucos)
+        area = st.multiselect("Área", options=todas_areas_opcoes, default=todas_areas_opcoes)
+
+# Filtro dos dados
 df_view = df_full[
     (df_full['Categoria_Cliente'].isin(cat)) & 
     (df_full['status_venda'].isin(sts)) &
@@ -221,7 +226,7 @@ col_sel, col_detalhe = st.columns([1, 2])
 
 with col_sel:
     df_view['label_select'] = df_view['razao_social'] + " (" + df_view['Ultima_Compra'] + ")"
-    # Remove duplicatas visuais no dropdown
+    # Remove duplicatas visuais no dropdown (apenas visual, não dados)
     opcoes_ataque = sorted(list(set(df_view['label_select'].tolist())))
     selecionado = st.selectbox("Busque por Razão Social:", ["Selecione..."] + opcoes_ataque)
 
