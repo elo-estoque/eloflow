@@ -10,89 +10,104 @@ import urllib.parse
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Elo Flow - Prospecção", layout="wide", page_icon="🦅")
 
-# --- CSS VISUAL (ESTILOS) ---
+# --- CSS VISUAL (ESTILOS CORRIGIDOS PARA LEGIBILIDADE MÁXIMA) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
-    :root {
-        --brand-dark: #050505; --brand-card: #121212; --brand-wine: #E31937;
-        --text-main: #E5E7EB; --text-muted: #9CA3AF; --border-color: rgba(255, 255, 255, 0.1);
-        --highlight-bg: #2d2610; --highlight-border: #f59e0b;
+    
+    /* Força o fundo geral e texto base */
+    .stApp { 
+        background-color: #050505; 
+        color: #E5E7EB; 
+        font-family: 'Inter', sans-serif; 
     }
-    .stApp { background-color: var(--brand-dark); color: var(--text-main); font-family: 'Inter', sans-serif; }
     
-    section[data-testid="stSidebar"] { background-color: var(--brand-card); border-right: 1px solid var(--border-color); }
-    div[data-testid="stMetric"] { background-color: var(--brand-card); border: 1px solid var(--border-color); padding: 10px; border-radius: 8px; }
-    div[data-testid="stMetricLabel"] { color: var(--text-muted); }
-    div[data-testid="stMetricValue"] { color: var(--brand-wine); font-weight: 700; }
+    section[data-testid="stSidebar"] { background-color: #121212; border-right: 1px solid #333; }
     
-    div.stButton > button { background-color: var(--brand-wine); color: white; border: none; width: 100%; border-radius: 6px; }
-    div.stButton > button:hover { background-color: #C2132F; color: white; border-color: #C2132F; }
-    
-    /* CARD DE FOCO */
+    /* Estilo dos Cards (Fundo Escuro com Texto Branco Forçado) */
     .foco-card {
-        background-color: #1A1A1A;
-        padding: 20px;
+        background-color: #151515 !important;
+        padding: 24px;
         border-radius: 12px;
         border: 1px solid #333;
         border-left: 6px solid #E31937;
         margin-bottom: 20px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
-    .foco-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-        margin-top: 15px;
-        font-size: 15px;
-    }
-    .foco-item {
-        background-color: #252525;
-        padding: 8px 12px;
-        border-radius: 6px;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
     }
     
-    /* BOX DE SUGESTÃO (SAZONALIDADE) */
-    .sugestao-box {
-        background-color: #2e1d05; /* Fundo amarelado escuro */
-        border: 1px solid #b45309;
+    /* Grid de informações dentro do card */
+    .foco-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr; /* Duas colunas */
+        gap: 15px;
+        margin-top: 20px;
+        font-size: 15px;
+    }
+    
+    /* Itens individuais (Caixinhas cinzas) */
+    .foco-item {
+        background-color: #252525 !important;
+        color: #FFFFFF !important; /* Texto BRANCO forçado */
+        padding: 12px 16px;
         border-radius: 8px;
-        padding: 15px;
-        margin-top: 15px;
-    }
-    .sugestao-title {
-        color: #fbbf24;
-        font-weight: 700;
-        font-size: 16px;
-        margin-bottom: 10px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .sku-item {
-        background-color: rgba(251, 191, 36, 0.1);
-        padding: 4px 8px;
-        border-radius: 4px;
-        margin-bottom: 4px;
-        font-size: 14px;
-        color: #fcd34d;
+        border: 1px solid #3a3a3a;
+        line-height: 1.4;
     }
 
-    .foco-obs {
-        background-color: #222;
-        padding: 12px;
-        border-radius: 6px;
-        margin-top: 15px;
-        border: 1px dashed #444;
-        color: #CCC;
+    /* Labels dentro dos itens (Negrito Vermelho) */
+    .foco-item b {
+        color: #E31937 !important; /* Vermelho da marca */
+        font-weight: 700;
+        display: block; /* Quebra linha para o título ficar em cima */
+        font-size: 12px;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }
+    
+    /* Caixa de Sugestão (Amarela) - Destaque Sazonalidade */
+    .sugestao-box {
+        background-color: #2D2006 !important;
+        border: 1px solid #B45309;
+        border-radius: 8px;
+        padding: 16px;
+        margin-top: 20px;
+    }
+    .sugestao-title {
+        color: #FBBF24 !important; /* Amarelo ouro */
+        font-weight: 700;
+        font-size: 16px;
+        margin-bottom: 12px;
+        display: flex; align-items: center; gap: 8px;
+    }
+    .sku-item {
+        background-color: rgba(251, 191, 36, 0.15);
+        color: #FCD34D !important; /* Texto amarelo claro */
+        padding: 6px 10px;
+        border-radius: 4px;
+        margin-bottom: 6px;
+        font-size: 14px;
+        border: 1px solid rgba(251, 191, 36, 0.2);
+    }
+
+    /* Box de Observação e Script */
+    .foco-obs, .script-box {
+        background-color: #1E1E1E !important;
+        padding: 15px;
+        border-radius: 8px;
+        margin-top: 20px;
+        border: 1px solid #333;
+        color: #E0E0E0 !important;
+        font-size: 14px;
+        font-style: italic;
     }
     .script-box {
-        background-color: #2A1015;
-        padding: 15px;
-        border-radius: 6px;
-        margin-top: 15px;
-        border-left: 3px solid #E31937;
+        border-left: 4px solid #E31937;
+        background-color: #2A1015 !important; /* Fundo avermelhado bem escuro */
     }
+    
+    /* Botões */
+    div.stButton > button { background-color: #E31937; color: white; border: none; width: 100%; border-radius: 6px; }
+    div.stButton > button:hover { background-color: #C2132F; color: white; border-color: #C2132F; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -105,9 +120,9 @@ if not os.path.exists(DATA_DIR):
 
 DB_FILE = os.path.join(DATA_DIR, "db_elo_flow.csv")        
 CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")
-PRODUTOS_FILE = os.path.join(DATA_DIR, "mais_pedidos.csv") # Nome padrão salvo
+PRODUTOS_FILE = os.path.join(DATA_DIR, "mais_pedidos.csv") 
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES AUXILIARES ---
 
 def carregar_crm_db():
     cols_padrao = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 'data_interacao', 
@@ -196,7 +211,6 @@ def carregar_excel(path_or_file):
         return df_final
 
     except Exception as e:
-        st.error(f"Erro ao ler excel clientes: {e}")
         return None
 
 # --- LEITURA DO EXCEL DE PRODUTOS (MAIS PEDIDOS) ---
@@ -205,14 +219,14 @@ def carregar_produtos_sugestao(path_or_file):
     try:
         # Tenta ler csv ou excel
         if str(path_or_file).endswith('.csv'):
-            df = pd.read_csv(path_or_file, sep=None, engine='python') # Tenta detectar separador
+            df = pd.read_csv(path_or_file, sep=None, engine='python') 
         else:
             df = pd.read_excel(path_or_file)
             
         # Normalizar colunas para maiusculo para facilitar busca
         df.columns = [c.upper().strip() for c in df.columns]
         
-        # Identificar colunas chaves
+        # Identificar colunas chaves (Adaptar conforme seu CSV)
         col_desc = next((c for c in df.columns if 'DESC' in c or 'NOME' in c or 'PRODUTO' in c), None)
         col_id = next((c for c in df.columns if 'COD' in c or 'SKU' in c), None)
         
@@ -220,34 +234,37 @@ def carregar_produtos_sugestao(path_or_file):
             df = df.rename(columns={col_desc: 'PRODUTO_NOME'})
         if col_id:
             df = df.rename(columns={col_id: 'SKU'})
-            
+        
+        # Garante que tem a coluna nome, se não tiver cria uma dummy
+        if 'PRODUTO_NOME' not in df.columns:
+             # Tenta pegar a primeira coluna de texto
+             df['PRODUTO_NOME'] = df.iloc[:, 0].astype(str)
+
         return df
     except Exception as e:
         return None
 
-# --- MOTOR DE SUGESTÃO (INTELIGÊNCIA DE VENDAS) ---
+# --- MOTOR DE SUGESTÃO (INTELIGÊNCIA DE VENDAS JANEIRO) ---
 def gerar_sugestoes_janeiro(area_atuacao, df_produtos):
     """
-    Filtra os produtos 'Mais Pedidos' baseado na área de atuação do cliente
-    e na sazonalidade de Janeiro.
+    Cruza Área de Atuação com Palavras-Chave de Produtos para Janeiro.
     """
     if df_produtos is None or df_produtos.empty:
         return [], "Sem catálogo carregado."
 
-    # Mapa de Palavras-Chave por Área
-    # Se a área do cliente contiver X, sugerir produtos com Y
+    # Regras de Negócio: Área -> Palavras Chave
     regras_janeiro = {
-        'EDUCACIONAL': ['PAPEL', 'CANETA', 'CADERNO', 'ESCOLA', 'LÁPIS', 'SULFITE', 'RESMA'],
+        'EDUCACIONAL': ['PAPEL', 'CANETA', 'CADERNO', 'ESCOLA', 'LÁPIS', 'SULFITE', 'RESMA', 'TINTA', 'APAGADOR'],
         'ESCOLA': ['PAPEL', 'CANETA', 'CADERNO', 'ESCOLA', 'LÁPIS', 'SULFITE', 'RESMA'],
-        'INDÚSTRIA': ['EPI', 'LUVA', 'OCULOS', 'CAPACETE', 'FERRAMENTA', 'FITA', 'ADHESIVO', 'MANUTENCAO'],
+        'INDÚSTRIA': ['EPI', 'LUVA', 'OCULOS', 'CAPACETE', 'FERRAMENTA', 'FITA', 'ADHESIVO', 'MANUTENCAO', 'SOLDA', 'ABRASIVO'],
         'INDUSTRIA': ['EPI', 'LUVA', 'OCULOS', 'CAPACETE', 'FERRAMENTA', 'FITA', 'ADHESIVO', 'MANUTENCAO'],
-        'SAÚDE': ['LUVA', 'MASCARA', 'HIGIENE', 'ALCOOL', 'DESCARTAVEL', 'SERINGA'],
-        'FARMÁCIA': ['SOLAR', 'HIDRATANTE', 'VITAMINA', 'VERAO'],
-        'FARMACIA': ['SOLAR', 'HIDRATANTE', 'VITAMINA', 'VERAO'],
-        'TRANSPORTE': ['OLEO', 'PNEU', 'MANUTENCAO', 'LIMPEZA', 'AUTOMOTIVO', 'GRAXA'],
-        'LOGÍSTICA': ['FITA', 'ESTILETE', 'EMBALAGEM', 'PLASTICO', 'PALETE'],
-        'COMÉRCIO': ['BOBINA', 'EMBALAGEM', 'SACOLA', 'ETIQUETA'],
-        'SERVIÇOS': ['CAFE', 'COPO', 'LIMPEZA', 'PAPEL', 'ESCRITORIO']
+        'SAÚDE': ['LUVA', 'MASCARA', 'HIGIENE', 'ALCOOL', 'DESCARTAVEL', 'SERINGA', 'GAZE', 'LENÇOL'],
+        'FARMÁCIA': ['SOLAR', 'HIDRATANTE', 'VITAMINA', 'VERAO', 'REPELENTE'],
+        'FARMACIA': ['SOLAR', 'HIDRATANTE', 'VITAMINA', 'VERAO', 'REPELENTE'],
+        'TRANSPORTE': ['OLEO', 'PNEU', 'MANUTENCAO', 'LIMPEZA', 'AUTOMOTIVO', 'GRAXA', 'LUBRIFICANTE'],
+        'LOGÍSTICA': ['FITA', 'ESTILETE', 'EMBALAGEM', 'PLASTICO', 'PALETE', 'STRETCH'],
+        'COMÉRCIO': ['BOBINA', 'EMBALAGEM', 'SACOLA', 'ETIQUETA', 'PREÇO'],
+        'SERVIÇOS': ['CAFE', 'COPO', 'LIMPEZA', 'PAPEL', 'ESCRITORIO', 'HIGIENE']
     }
 
     area_upper = str(area_atuacao).upper()
@@ -263,27 +280,28 @@ def gerar_sugestoes_janeiro(area_atuacao, df_produtos):
     
     # Se não achou regra específica, usa regra geral de Janeiro (Verão/Volta aulas)
     if not keywords:
-        keywords = ['PAPEL', 'VERAO', 'VENTILADOR', 'AGUA', 'ORGANIZADOR']
+        keywords = ['PAPEL', 'VERAO', 'VENTILADOR', 'AGUA', 'ORGANIZADOR', 'OFERTA']
         matched_key = "Geral (Janeiro)"
 
-    # Filtra o DataFrame
-    # Cria uma máscara booleana: True se o nome do produto contiver QUALQUER uma das keywords
+    # Filtra o DataFrame de Produtos
     mask = df_produtos['PRODUTO_NOME'].astype(str).str.upper().apply(lambda x: any(k in x for k in keywords))
-    
-    df_sugestao = df_produtos[mask].head(5) # Pega os top 5 dessa categoria
+    df_sugestao = df_produtos[mask].head(6) # Pega os top 6 dessa categoria
     
     lista_skus = []
     if not df_sugestao.empty:
         for _, row in df_sugestao.iterrows():
             nome = row['PRODUTO_NOME']
             sku = row.get('SKU', '-')
-            lista_skus.append(f"📦 {sku} - {nome}")
+            # Tenta formatar bonito se tiver SKU
+            if str(sku) != '-' and str(sku) != 'nan':
+                 lista_skus.append(f"📦 <b>{sku}</b> - {nome}")
+            else:
+                 lista_skus.append(f"📦 {nome}")
     else:
         lista_skus.append("⚠️ Nenhum produto específico encontrado para esta área na lista de Mais Pedidos.")
 
-    pitch = f"Foco em produtos de {matched_key} para Janeiro."
-    return lista_skus, pitch
-
+    motivo = f"Foco em produtos de <b>{matched_key}</b> (Sazonalidade Janeiro)."
+    return lista_skus, motivo
 
 # --- SIDEBAR & UPLOAD ---
 st.sidebar.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
@@ -326,12 +344,11 @@ if os.path.exists(PRODUTOS_FILE):
 else:
     uploaded_prod = st.sidebar.file_uploader("📂 Importar Mais Pedidos (.csv/.xlsx)", type=["xlsx", "csv"], key="up_prod")
     if uploaded_prod:
-        # Salva como CSV independente da origem pra padronizar nome
+        # Salva como CSV padronizado
         if uploaded_prod.name.endswith('.csv'):
             with open(PRODUTOS_FILE, "wb") as f:
                 f.write(uploaded_prod.getbuffer())
         else:
-            # Se for excel, lê e salva como csv pra facilitar
             df_temp = pd.read_excel(uploaded_prod)
             df_temp.to_csv(PRODUTOS_FILE, index=False)
             
@@ -403,7 +420,7 @@ k4.metric("Em Negociação", len(df_view[df_view['status_venda'] == 'Em Negocia�
 
 st.divider()
 
-# --- MODO DE ATAQUE (LAYOUT COM INTELIGÊNCIA) ---
+# --- MODO DE ATAQUE (LAYOUT ATUALIZADO) ---
 st.markdown("### 🚀 Modo de Ataque (Foco)")
 col_sel, col_detalhe = st.columns([1, 2])
 
@@ -436,34 +453,37 @@ if selecionado and selecionado != "Selecione...":
     html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
 
     with col_detalhe:
-        # Card HTML
+        # Card HTML OTIMIZADO PARA LEGIBILIDADE
         html_card = f"""
 <div class="foco-card">
-    <h2 style='margin:0; color: #FFF;'>🏢 {cliente['razao_social']}</h2>
-    <p style='color: #999; margin-top: -5px;'>ID: {cliente['pj_id']}</p>
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style='margin:0; color: #FFF; font-size: 24px;'>🏢 {cliente['razao_social']}</h2>
+        <span style='background:#333; padding:4px 8px; border-radius:4px; font-size:12px; color:#aaa;'>ID: {cliente['pj_id']}</span>
+    </div>
     
     <div class="foco-grid">
-        <div class="foco-item"><b>📋 CNPJ:</b> {cliente['cnpj']}</div>
-        <div class="foco-item"><b>📍 Área:</b> {cliente['area_atuacao_nome']}</div>
-        <div class="foco-item"><b>📞 Tel:</b> {tel_raw}</div>
-        <div class="foco-item"><b>📧 Email:</b> {email_cliente}</div>
-        <div class="foco-item"><b>📅 Última Compra:</b> {cliente['Ultima_Compra']} <b style="color:#E31937">({dias} dias)</b></div>
-        <div class="foco-item"><b>📊 Status:</b> {status_cli}</div>
+        <div class="foco-item"><b>📍 Área / Segmento</b>{cliente['area_atuacao_nome']}</div>
+        <div class="foco-item"><b>📋 CNPJ</b>{cliente['cnpj']}</div>
+        <div class="foco-item"><b>📞 Telefone</b>{tel_raw}</div>
+        <div class="foco-item"><b>📧 E-mail</b>{email_cliente}</div>
+        <div class="foco-item"><b>📅 Última Compra</b>{cliente['Ultima_Compra']} <span style="color:#ff6b6b; font-size:12px;">({dias} dias)</span></div>
+        <div class="foco-item"><b>📊 Status Atual</b>{status_cli}</div>
     </div>
 
     <div class="sugestao-box">
         <div class="sugestao-title">🎯 Oportunidade de Janeiro ({area_cli})</div>
-        <div style="margin-bottom:8px; font-size:14px; color:#ddd;"><i>Motivo: {motivo_sugestao}</i></div>
+        <div style="margin-bottom:10px; font-size:14px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
         {html_sugestoes}
     </div>
 
     <div class="foco-obs">
-        <b>📝 Observação Salva:</b><br>
-        <i>{obs_cliente if obs_cliente else "Nenhuma observação registrada."}</i>
+        <b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Observação Salva:</b>
+        {obs_cliente if obs_cliente else "Nenhuma observação registrada."}
     </div>
     
     <div class="script-box">
-        <p style='margin:0;'>🗣️ <b>Script Sugerido:</b><br><i>"{script_msg}"</i></p>
+        <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Sugerido:</b>
+        "{script_msg}"
     </div>
 </div>
 """
