@@ -65,13 +65,13 @@ CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")
 
 # --- FUNÇÕES ---
 def carregar_crm_db():
-    # Colunas padrão incluem as novas de tentativas
+    # ADICIONEI gap_1_2 e gap_2_3 NO BANCO DE DADOS
     cols_padrao = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 'data_interacao', 
-                   'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']
+                   'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
+                   'gap_1_2', 'gap_2_3']
     
     if os.path.exists(DB_FILE):
         df = pd.read_csv(DB_FILE, dtype={'pj_id': str})
-        # Garante que as colunas novas existam se o arquivo for antigo
         for col in cols_padrao:
             if col not in df.columns:
                 df[col] = None
@@ -80,14 +80,15 @@ def carregar_crm_db():
         return pd.DataFrame(columns=cols_padrao)
 
 def salvar_alteracoes(df_editor, df_original_crm):
-    # Pega apenas as colunas editáveis/persistentes
+    # ADICIONEI OS GAPS PARA SALVAR TAMBÉM
     cols_salvar = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 
-                   'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']
+                   'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
+                   'gap_1_2', 'gap_2_3']
     
     novos_dados = df_editor[cols_salvar].copy()
     novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Tratamento de datas para string antes de salvar no CSV
+    # Tratamento de datas
     for col in ['data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']:
         novos_dados[col] = pd.to_datetime(novos_dados[col], errors='coerce').dt.strftime('%Y-%m-%d')
 
@@ -110,19 +111,6 @@ def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
-def calcular_gap(data_atual, data_anterior):
-    """Calcula a diferença em dias entre duas datas"""
-    if pd.isna(data_atual) or pd.isna(data_anterior):
-        return "-"
-    try:
-        d1 = pd.to_datetime(data_atual)
-        d2 = pd.to_datetime(data_anterior)
-        diff = (d1 - d2).days
-        if diff < 0: return "Erro data"
-        return f"+{diff} dias"
-    except:
-        return "-"
-
 # --- LEITURA DO EXCEL ---
 @st.cache_data
 def carregar_excel(path_or_file):
@@ -140,7 +128,6 @@ def carregar_excel(path_or_file):
             df = pd.read_excel(xls, sheet_name=sheet_name)
             df['Categoria_Cliente'] = categoria
             
-            # Tratamento de Data
             if 'DATA_EXIBICAO' in df.columns:
                 df['data_temp'] = pd.to_datetime(df['DATA_EXIBICAO'], errors='coerce', dayfirst=True)
                 df['Ultima_Compra'] = df['data_temp'].dt.strftime('%d/%m/%Y').fillna("-")
@@ -150,13 +137,11 @@ def carregar_excel(path_or_file):
                 df['Ultima_Compra'] = "-"
                 df['dias_sem_compra'] = 9999
             
-            # Garante colunas essenciais
             cols_check = {'area_atuacao_nome': 'Indefinido', 'telefone_1': '', 'email_1': '', 'pj_id': '', 'razao_social': ''}
             for col, val in cols_check.items():
                 if col not in df.columns: df[col] = val
                 else: df[col] = df[col].fillna(val)
 
-            # Força ID como string
             if 'pj_id' in df.columns:
                 df['pj_id'] = df['pj_id'].astype(str).str.replace(r'\.0$', '', regex=True)
 
@@ -165,9 +150,7 @@ def carregar_excel(path_or_file):
         if not dfs: return None
         
         df_final = pd.concat(dfs, ignore_index=True)
-        # Mantém todas as linhas, remove apenas lixo exato
         df_final = df_final.drop_duplicates() 
-        
         return df_final
 
     except Exception as e:
@@ -218,18 +201,18 @@ else:
 df_crm = carregar_crm_db()
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 
-# Preenche vazios e converte colunas de data de tentativa para datetime
+# Preenche vazios
 df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
 df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
 df_full['obs'] = df_full['obs'].fillna('')
 
+# Garante que as colunas de GAP existam para edição
+if 'gap_1_2' not in df_full.columns: df_full['gap_1_2'] = ""
+if 'gap_2_3' not in df_full.columns: df_full['gap_2_3'] = ""
+
 for col in ['data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']:
     if col in df_full.columns:
         df_full[col] = pd.to_datetime(df_full[col], errors='coerce')
-
-# Cálculos de GAP (Intervalo entre tentativas) para visualização
-df_full['gap_1_2'] = df_full.apply(lambda x: calcular_gap(x['data_tentativa_2'], x['data_tentativa_1']), axis=1)
-df_full['gap_2_3'] = df_full.apply(lambda x: calcular_gap(x['data_tentativa_3'], x['data_tentativa_2']), axis=1)
 
 # --- DASHBOARD ---
 st.title("🦅 Visão Geral - Carteira")
@@ -238,7 +221,6 @@ c1, c2, c3 = st.columns(3)
 cat = c1.multiselect("Categoria", df_full['Categoria_Cliente'].unique(), default=df_full['Categoria_Cliente'].unique())
 sts = c2.multiselect("Status", df_full['status_venda'].unique(), default=df_full['status_venda'].unique())
 
-# --- FILTRO "TODAS AS ÁREAS" ---
 with c3:
     todas_areas_opcoes = df_full['area_atuacao_nome'].unique()
     usar_todas = st.checkbox("Selecionar Todas as Áreas", value=True)
@@ -248,7 +230,6 @@ with c3:
     else:
         area = st.multiselect("Área", options=todas_areas_opcoes, default=todas_areas_opcoes)
 
-# Filtro dos dados
 df_view = df_full[
     (df_full['Categoria_Cliente'].isin(cat)) & 
     (df_full['status_venda'].isin(sts)) &
@@ -266,13 +247,12 @@ k4.metric("Em Negociação", len(df_view[df_view['status_venda'] == 'Em Negocia�
 
 st.divider()
 
-# --- MODO DE ATAQUE (TURBINADO) ---
+# --- MODO DE ATAQUE ---
 st.markdown("### 🚀 Modo de Ataque (Foco)")
 col_sel, col_detalhe = st.columns([1, 2])
 
 with col_sel:
     df_view['label_select'] = df_view['razao_social'] + " (" + df_view['Ultima_Compra'] + ")"
-    # Dropdown de seleção
     opcoes_ataque = sorted(list(set(df_view['label_select'].tolist())))
     selecionado = st.selectbox("Busque por Razão Social:", ["Selecione..."] + opcoes_ataque)
 
@@ -287,7 +267,6 @@ if selecionado and selecionado != "Selecione...":
     status_cli = cliente['status_venda']
     tel_clean = limpar_telefone(tel_raw)
     
-    # Script Dinâmico
     if dias != "Muitos" and dias > 30:
         script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada."
     elif "Novo" in cliente['status_venda']:
@@ -296,7 +275,6 @@ if selecionado and selecionado != "Selecione...":
         script_msg = f"Olá! Gostaria de falar sobre oportunidades para a área de {area_cli}."
 
     with col_detalhe:
-        # CARD COMPLETO COM TODAS AS INFOS
         st.markdown(f"""
         <div class="foco-card">
             <h3 style="margin-bottom: 0;">🏢 {cliente['razao_social']}</h3>
@@ -362,12 +340,14 @@ col_config = {
     "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
     "obs": st.column_config.TextColumn("Obs", width="large"),
     
-    # NOVAS COLUNAS DE CADÊNCIA
+    # DATAS
     "data_tentativa_1": st.column_config.DateColumn("Tentativa 1", format="DD/MM/YYYY"),
     "data_tentativa_2": st.column_config.DateColumn("Tentativa 2", format="DD/MM/YYYY"),
     "data_tentativa_3": st.column_config.DateColumn("Tentativa 3", format="DD/MM/YYYY"),
-    "gap_1_2": st.column_config.TextColumn("Intervalo 1-2", disabled=True),
-    "gap_2_3": st.column_config.TextColumn("Intervalo 2-3", disabled=True)
+    
+    # GAPS AGORA SÃO TEXTO LIVRE E EDITÁVEIS
+    "gap_1_2": st.column_config.TextColumn("Intervalo 1-2 (Dias)", help="Digite o intervalo"),
+    "gap_2_3": st.column_config.TextColumn("Intervalo 2-3 (Dias)", help="Digite o intervalo")
 }
 
 cols_display = [
