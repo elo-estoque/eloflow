@@ -127,12 +127,13 @@ PRODUTOS_FILE = os.path.join(DATA_DIR, "mais_pedidos.csv")
 # --- FUNÇÕES AUXILIARES ---
 
 def carregar_crm_db():
+    # ADICIONADO: email_1 e telefone_1 para salvar edições
     cols_padrao = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 'data_interacao', 
                    'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
-                   'gap_1_2', 'gap_2_3']
+                   'gap_1_2', 'gap_2_3', 'email_1', 'telefone_1']
     
     if os.path.exists(DB_FILE):
-        df = pd.read_csv(DB_FILE, dtype={'pj_id': str})
+        df = pd.read_csv(DB_FILE, dtype={'pj_id': str, 'email_1': str, 'telefone_1': str})
         for col in cols_padrao:
             if col not in df.columns:
                 df[col] = None
@@ -141,10 +142,16 @@ def carregar_crm_db():
         return pd.DataFrame(columns=cols_padrao)
 
 def salvar_alteracoes(df_editor, df_original_crm):
+    # ADICIONADO: email_1 e telefone_1 na lista de salvamento
     cols_salvar = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 
                    'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
-                   'gap_1_2', 'gap_2_3']
+                   'gap_1_2', 'gap_2_3', 'email_1', 'telefone_1']
     
+    # Garante que as colunas existam no dataframe editado antes de salvar
+    for col in cols_salvar:
+        if col not in df_editor.columns:
+            df_editor[col] = None
+
     novos_dados = df_editor[cols_salvar].copy()
     novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
@@ -376,9 +383,26 @@ else:
 
 # Merge com CRM Local
 df_crm = carregar_crm_db()
-df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 
-# Preenche vazios
+# Garante que tipos de dados sejam strings para o merge
+if 'email_1' in df_crm.columns: df_crm['email_1'] = df_crm['email_1'].astype(str).replace('nan', '')
+if 'telefone_1' in df_crm.columns: df_crm['telefone_1'] = df_crm['telefone_1'].astype(str).replace('nan', '')
+
+# Merge com sufixos para diferenciar dados originais (Planilha) dos salvos (CRM)
+df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left', suffixes=('', '_crm'))
+
+# LÓGICA DE PRIORIDADE: Se existir dado no CRM (editado), ele sobrescreve o da planilha
+if 'email_1_crm' in df_full.columns:
+    df_full['email_1'] = df_full['email_1_crm'].combine_first(df_full['email_1'])
+
+if 'telefone_1_crm' in df_full.columns:
+    df_full['telefone_1'] = df_full['telefone_1_crm'].combine_first(df_full['telefone_1'])
+
+# Remove colunas auxiliares do merge
+cols_to_drop = [c for c in df_full.columns if c.endswith('_crm')]
+df_full.drop(columns=cols_to_drop, inplace=True)
+
+# Preenche vazios básicos
 df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
 df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
 df_full['obs'] = df_full['obs'].fillna('')
@@ -572,10 +596,11 @@ col_config = {
     "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
     "cnpj": st.column_config.TextColumn("CNPJ", disabled=True),
     "area_atuacao_nome": st.column_config.TextColumn("Área", disabled=True),
-    "email_1": st.column_config.TextColumn("E-mail", disabled=True),
+    # EDITA E-MAIL E TELEFONE AGORA
+    "email_1": st.column_config.TextColumn("E-mail", disabled=False),
+    "telefone_1": st.column_config.TextColumn("Telefone", disabled=False),
     "Ultima_Compra": st.column_config.TextColumn("Última Compra", disabled=True),
     "dias_sem_compra": st.column_config.NumberColumn("Dias Inativo", format="%d dias"),
-    "telefone_1": st.column_config.TextColumn("Telefone", disabled=True),
     "status_venda": st.column_config.SelectboxColumn(
         "Status", 
         options=['Não contatado', 'Tentando Contato', 'Em Negociação', 'Fechado', 'Perdido', 'Novo'], 
