@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.io as pio
-from datetime import datetime
+from datetime import datetime, date
 import os
 import io
 import urllib.parse
@@ -35,6 +35,21 @@ st.markdown("""
         border-left: 5px solid #E31937;
         margin-bottom: 20px;
     }
+    .foco-info {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 10px;
+        font-size: 0.9rem;
+    }
+    .foco-obs {
+        background-color: #222;
+        padding: 10px;
+        border-radius: 5px;
+        margin-top: 10px;
+        font-style: italic;
+        color: #BBB;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -50,16 +65,33 @@ CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")
 
 # --- FUNÇÕES ---
 def carregar_crm_db():
+    # Colunas padrão incluem as novas de tentativas
+    cols_padrao = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 'data_interacao', 
+                   'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']
+    
     if os.path.exists(DB_FILE):
-        return pd.read_csv(DB_FILE, dtype={'pj_id': str})
+        df = pd.read_csv(DB_FILE, dtype={'pj_id': str})
+        # Garante que as colunas novas existam se o arquivo for antigo
+        for col in cols_padrao:
+            if col not in df.columns:
+                df[col] = None
+        return df
     else:
-        return pd.DataFrame(columns=['pj_id', 'status_venda', 'ja_ligou', 'obs', 'data_interacao'])
+        return pd.DataFrame(columns=cols_padrao)
 
 def salvar_alteracoes(df_editor, df_original_crm):
-    novos_dados = df_editor[['pj_id', 'status_venda', 'ja_ligou', 'obs']].copy()
+    # Pega apenas as colunas editáveis/persistentes
+    cols_salvar = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 
+                   'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']
+    
+    novos_dados = df_editor[cols_salvar].copy()
     novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Remove apenas duplicatas exatas (lixo), mantém IDs repetidos se forem filiais diferentes
+    # Tratamento de datas para string antes de salvar no CSV
+    for col in ['data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']:
+        novos_dados[col] = pd.to_datetime(novos_dados[col], errors='coerce').dt.strftime('%Y-%m-%d')
+
+    # Remove duplicatas exatas
     novos_dados = novos_dados.drop_duplicates()
     
     crm_atualizado = df_original_crm[~df_original_crm['pj_id'].isin(novos_dados['pj_id'])]
@@ -77,6 +109,19 @@ def converter_para_excel(df):
 def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
+
+def calcular_gap(data_atual, data_anterior):
+    """Calcula a diferença em dias entre duas datas"""
+    if pd.isna(data_atual) or pd.isna(data_anterior):
+        return "-"
+    try:
+        d1 = pd.to_datetime(data_atual)
+        d2 = pd.to_datetime(data_anterior)
+        diff = (d1 - d2).days
+        if diff < 0: return "Erro data"
+        return f"+{diff} dias"
+    except:
+        return "-"
 
 # --- LEITURA DO EXCEL ---
 @st.cache_data
@@ -120,7 +165,7 @@ def carregar_excel(path_or_file):
         if not dfs: return None
         
         df_final = pd.concat(dfs, ignore_index=True)
-        # Mantém todas as linhas do Excel, removendo apenas duplicatas literais de erro
+        # Mantém todas as linhas, remove apenas lixo exato
         df_final = df_final.drop_duplicates() 
         
         return df_final
@@ -136,15 +181,12 @@ arquivo_carregado = None
 
 if os.path.exists(CACHE_FILE):
     st.sidebar.success("✅ Lista carregada da memória!")
-    
     if st.sidebar.button("🗑️ Trocar Lista/Arquivo"):
         try:
             os.remove(CACHE_FILE)
             carregar_excel.clear() 
             st.rerun()
-        except:
-            pass 
-            
+        except: pass
     arquivo_carregado = CACHE_FILE
 else:
     uploaded_file = st.sidebar.file_uploader("📂 Importar Nova Tabela (.xlsx)", type=["xlsx"])
@@ -176,9 +218,18 @@ else:
 df_crm = carregar_crm_db()
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 
+# Preenche vazios e converte colunas de data de tentativa para datetime
 df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
 df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
 df_full['obs'] = df_full['obs'].fillna('')
+
+for col in ['data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']:
+    if col in df_full.columns:
+        df_full[col] = pd.to_datetime(df_full[col], errors='coerce')
+
+# Cálculos de GAP (Intervalo entre tentativas) para visualização
+df_full['gap_1_2'] = df_full.apply(lambda x: calcular_gap(x['data_tentativa_2'], x['data_tentativa_1']), axis=1)
+df_full['gap_2_3'] = df_full.apply(lambda x: calcular_gap(x['data_tentativa_3'], x['data_tentativa_2']), axis=1)
 
 # --- DASHBOARD ---
 st.title("🦅 Visão Geral - Carteira")
@@ -187,19 +238,14 @@ c1, c2, c3 = st.columns(3)
 cat = c1.multiselect("Categoria", df_full['Categoria_Cliente'].unique(), default=df_full['Categoria_Cliente'].unique())
 sts = c2.multiselect("Status", df_full['status_venda'].unique(), default=df_full['status_venda'].unique())
 
-# --- LÓGICA DO FILTRO "TODAS AS ÁREAS" ---
+# --- FILTRO "TODAS AS ÁREAS" ---
 with c3:
     todas_areas_opcoes = df_full['area_atuacao_nome'].unique()
-    
-    # Checkbox de controle rápido
     usar_todas = st.checkbox("Selecionar Todas as Áreas", value=True)
-    
     if usar_todas:
         area = todas_areas_opcoes
-        # Mostra o select desativado (cinza) mas preenchido, para o usuário ver
         st.multiselect("Área", options=todas_areas_opcoes, default=todas_areas_opcoes, disabled=True)
     else:
-        # Se desmarcar, libera o select normal (começando com tudo selecionado para facilitar a exclusão de poucos)
         area = st.multiselect("Área", options=todas_areas_opcoes, default=todas_areas_opcoes)
 
 # Filtro dos dados
@@ -220,13 +266,13 @@ k4.metric("Em Negociação", len(df_view[df_view['status_venda'] == 'Em Negocia�
 
 st.divider()
 
-# --- MODO DE ATAQUE (Foco) ---
+# --- MODO DE ATAQUE (TURBINADO) ---
 st.markdown("### 🚀 Modo de Ataque (Foco)")
 col_sel, col_detalhe = st.columns([1, 2])
 
 with col_sel:
     df_view['label_select'] = df_view['razao_social'] + " (" + df_view['Ultima_Compra'] + ")"
-    # Remove duplicatas visuais no dropdown (apenas visual, não dados)
+    # Dropdown de seleção
     opcoes_ataque = sorted(list(set(df_view['label_select'].tolist())))
     selecionado = st.selectbox("Busque por Razão Social:", ["Selecione..."] + opcoes_ataque)
 
@@ -237,8 +283,11 @@ if selecionado and selecionado != "Selecione...":
     area_cli = cliente['area_atuacao_nome']
     tel_raw = str(cliente['telefone_1'])
     email_cliente = str(cliente['email_1']).strip()
+    obs_cliente = str(cliente['obs']).strip()
+    status_cli = cliente['status_venda']
     tel_clean = limpar_telefone(tel_raw)
     
+    # Script Dinâmico
     if dias != "Muitos" and dias > 30:
         script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada."
     elif "Novo" in cliente['status_venda']:
@@ -247,13 +296,27 @@ if selecionado and selecionado != "Selecione...":
         script_msg = f"Olá! Gostaria de falar sobre oportunidades para a área de {area_cli}."
 
     with col_detalhe:
+        # CARD COMPLETO COM TODAS AS INFOS
         st.markdown(f"""
         <div class="foco-card">
-            <h3>🏢 {cliente['razao_social']}</h3>
-            <p><b>CNPJ:</b> {cliente['cnpj']} | <b>Área:</b> {cliente['area_atuacao_nome']}</p>
-            <p><b>📅 Última Compra:</b> {cliente['Ultima_Compra']} <span style="color:#E31937">({dias} dias atrás)</span></p>
+            <h3 style="margin-bottom: 0;">🏢 {cliente['razao_social']}</h3>
+            <span style="font-size: 0.8em; color: #999;">ID: {cliente['pj_id']}</span>
+            
+            <div class="foco-info">
+                <div><b>CNPJ:</b> {cliente['cnpj']}</div>
+                <div><b>Área:</b> {cliente['area_atuacao_nome']}</div>
+                <div><b>📞 Tel:</b> {tel_raw}</div>
+                <div><b>📧 Email:</b> {email_cliente}</div>
+                <div><b>📅 Últ. Compra:</b> {cliente['Ultima_Compra']} <span style="color:#E31937">({dias} dias)</span></div>
+                <div><b>📊 Status:</b> {status_cli}</div>
+            </div>
+            
+            <div class="foco-obs">
+                <b>📝 Obs Salva:</b> {obs_cliente if obs_cliente else "Nenhuma observação registrada."}
+            </div>
+
             <hr style="border-color: #333;">
-            <p>📝 <b>Script:</b> <i>"{script_msg}"</i></p>
+            <p>🗣️ <b>Script:</b> <i>"{script_msg}"</i></p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -280,7 +343,7 @@ if selecionado and selecionado != "Selecione...":
 st.divider()
 
 # --- TABELA DE TRABALHO ---
-st.subheader("📋 Lista de Prospecção")
+st.subheader("📋 Lista de Prospecção & Cadência")
 
 col_config = {
     "pj_id": st.column_config.TextColumn("ID", disabled=True),
@@ -297,13 +360,24 @@ col_config = {
         required=True
     ),
     "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
-    "obs": st.column_config.TextColumn("Obs", width="large")
+    "obs": st.column_config.TextColumn("Obs", width="large"),
+    
+    # NOVAS COLUNAS DE CADÊNCIA
+    "data_tentativa_1": st.column_config.DateColumn("Tentativa 1", format="DD/MM/YYYY"),
+    "data_tentativa_2": st.column_config.DateColumn("Tentativa 2", format="DD/MM/YYYY"),
+    "data_tentativa_3": st.column_config.DateColumn("Tentativa 3", format="DD/MM/YYYY"),
+    "gap_1_2": st.column_config.TextColumn("Intervalo 1-2", disabled=True),
+    "gap_2_3": st.column_config.TextColumn("Intervalo 2-3", disabled=True)
 }
 
 cols_display = [
-    'pj_id', 'razao_social', 'cnpj', 'area_atuacao_nome', 
-    'email_1', 'Ultima_Compra', 'dias_sem_compra', 'telefone_1', 
-    'status_venda', 'ja_ligou', 'obs'
+    'pj_id', 'razao_social', 'cnpj', 'status_venda', 
+    'data_tentativa_1', 
+    'gap_1_2', 
+    'data_tentativa_2', 
+    'gap_2_3', 
+    'data_tentativa_3',
+    'obs', 'telefone_1', 'Ultima_Compra', 'email_1'
 ]
 
 df_edit = st.data_editor(
@@ -312,7 +386,7 @@ df_edit = st.data_editor(
     hide_index=True, 
     use_container_width=True, 
     key="editor_crm", 
-    height=500
+    height=600
 )
 
 # --- RODAPÉ ---
