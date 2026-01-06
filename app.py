@@ -10,7 +10,7 @@ import urllib.parse
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Elo Flow - Prospecção", layout="wide", page_icon="🦅")
 
-# --- CSS VISUAL ---
+# --- CSS VISUAL (ESTILOS) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -28,27 +28,42 @@ st.markdown("""
     div.stButton > button { background-color: var(--brand-wine); color: white; border: none; width: 100%; border-radius: 6px; }
     div.stButton > button:hover { background-color: #C2132F; color: white; border-color: #C2132F; }
     
+    /* ESTILO DO CARD DE FOCO CORRIGIDO */
     .foco-card {
         background-color: #1A1A1A;
         padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #E31937;
+        border-radius: 12px;
+        border: 1px solid #333;
+        border-left: 6px solid #E31937;
         margin-bottom: 20px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    .foco-info {
+    .foco-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 10px;
-        margin-top: 10px;
-        font-size: 0.9rem;
+        gap: 12px;
+        margin-top: 15px;
+        font-size: 15px;
+    }
+    .foco-item {
+        background-color: #252525;
+        padding: 8px 12px;
+        border-radius: 6px;
     }
     .foco-obs {
         background-color: #222;
-        padding: 10px;
-        border-radius: 5px;
-        margin-top: 10px;
-        font-style: italic;
-        color: #BBB;
+        padding: 12px;
+        border-radius: 6px;
+        margin-top: 15px;
+        border: 1px dashed #444;
+        color: #CCC;
+    }
+    .script-box {
+        background-color: #2A1015;
+        padding: 15px;
+        border-radius: 6px;
+        margin-top: 15px;
+        border-left: 3px solid #E31937;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -65,7 +80,6 @@ CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")
 
 # --- FUNÇÕES ---
 def carregar_crm_db():
-    # ADICIONEI gap_1_2 e gap_2_3 NO BANCO DE DADOS
     cols_padrao = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 'data_interacao', 
                    'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
                    'gap_1_2', 'gap_2_3']
@@ -80,7 +94,6 @@ def carregar_crm_db():
         return pd.DataFrame(columns=cols_padrao)
 
 def salvar_alteracoes(df_editor, df_original_crm):
-    # ADICIONEI OS GAPS PARA SALVAR TAMBÉM
     cols_salvar = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 
                    'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
                    'gap_1_2', 'gap_2_3']
@@ -88,11 +101,9 @@ def salvar_alteracoes(df_editor, df_original_crm):
     novos_dados = df_editor[cols_salvar].copy()
     novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Tratamento de datas
     for col in ['data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']:
         novos_dados[col] = pd.to_datetime(novos_dados[col], errors='coerce').dt.strftime('%Y-%m-%d')
 
-    # Remove duplicatas exatas
     novos_dados = novos_dados.drop_duplicates()
     
     crm_atualizado = df_original_crm[~df_original_crm['pj_id'].isin(novos_dados['pj_id'])]
@@ -205,8 +216,6 @@ df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
 df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
 df_full['obs'] = df_full['obs'].fillna('')
-
-# Garante que as colunas de GAP existam para edição
 if 'gap_1_2' not in df_full.columns: df_full['gap_1_2'] = ""
 if 'gap_2_3' not in df_full.columns: df_full['gap_2_3'] = ""
 
@@ -247,7 +256,7 @@ k4.metric("Em Negociação", len(df_view[df_view['status_venda'] == 'Em Negocia�
 
 st.divider()
 
-# --- MODO DE ATAQUE ---
+# --- MODO DE ATAQUE (LAYOUT CORRIGIDO) ---
 st.markdown("### 🚀 Modo de Ataque (Foco)")
 col_sel, col_detalhe = st.columns([1, 2])
 
@@ -275,46 +284,44 @@ if selecionado and selecionado != "Selecione...":
         script_msg = f"Olá! Gostaria de falar sobre oportunidades para a área de {area_cli}."
 
     with col_detalhe:
-        st.markdown(f"""
-        <div class="foco-card">
-            <h3 style="margin-bottom: 0;">🏢 {cliente['razao_social']}</h3>
-            <span style="font-size: 0.8em; color: #999;">ID: {cliente['pj_id']}</span>
-            
-            <div class="foco-info">
-                <div><b>CNPJ:</b> {cliente['cnpj']}</div>
-                <div><b>Área:</b> {cliente['area_atuacao_nome']}</div>
-                <div><b>📞 Tel:</b> {tel_raw}</div>
-                <div><b>📧 Email:</b> {email_cliente}</div>
-                <div><b>📅 Últ. Compra:</b> {cliente['Ultima_Compra']} <span style="color:#E31937">({dias} dias)</span></div>
-                <div><b>📊 Status:</b> {status_cli}</div>
-            </div>
-            
-            <div class="foco-obs">
-                <b>📝 Obs Salva:</b> {obs_cliente if obs_cliente else "Nenhuma observação registrada."}
-            </div>
-
-            <hr style="border-color: #333;">
-            <p>🗣️ <b>Script:</b> <i>"{script_msg}"</i></p>
-        </div>
-        """, unsafe_allow_html=True)
+        # AQUI ESTAVA O PROBLEMA: INDENTAÇÃO DENTRO DA STRING HTML.
+        # Agora está formatado sem espaços no início das linhas para garantir que o Markdown renderize certo.
+        html_card = f"""
+<div class="foco-card">
+<h2 style='margin:0; color: #FFF;'>🏢 {cliente['razao_social']}</h2>
+<p style='color: #999; margin-top: -5px;'>ID: {cliente['pj_id']}</p>
+<div class="foco-grid">
+<div class="foco-item"><b>📋 CNPJ:</b> {cliente['cnpj']}</div>
+<div class="foco-item"><b>📍 Área:</b> {cliente['area_atuacao_nome']}</div>
+<div class="foco-item"><b>📞 Tel:</b> {tel_raw}</div>
+<div class="foco-item"><b>📧 Email:</b> {email_cliente}</div>
+<div class="foco-item"><b>📅 Última Compra:</b> {cliente['Ultima_Compra']} <b style="color:#E31937">({dias} dias)</b></div>
+<div class="foco-item"><b>📊 Status:</b> {status_cli}</div>
+</div>
+<div class="foco-obs">
+<b>📝 Observação Salva:</b><br>
+<i>{obs_cliente if obs_cliente else "Nenhuma observação registrada."}</i>
+</div>
+<div class="script-box">
+<p style='margin:0;'>🗣️ <b>Script Sugerido:</b><br><i>"{script_msg}"</i></p>
+</div>
+</div>
+"""
+        st.markdown(html_card, unsafe_allow_html=True)
         
         b1, b2 = st.columns(2)
         with b1:
             if tel_clean and len(tel_clean) >= 10:
                 link_wpp = f"https://wa.me/55{tel_clean}?text={script_msg.replace(' ', '%20')}"
-                st.link_button(f"💬 WhatsApp ({tel_raw})", link_wpp, type="primary", use_container_width=True)
+                st.link_button(f"💬 Abrir WhatsApp ({tel_raw})", link_wpp, type="primary", use_container_width=True)
             else:
-                st.warning("Telefone inválido")
+                st.warning(f"Telefone inválido: {tel_raw}")
         
         with b2:
             if email_cliente and email_cliente.lower() != "nan" and "@" in email_cliente:
-                params = {
-                    "view": "cm", "fs": "1", "to": email_cliente,
-                    "su": "Oportunidade - Parceria Elo", "body": script_msg
-                }
-                query_string = urllib.parse.urlencode(params)
-                link_gmail = f"https://mail.google.com/mail/?{query_string}"
-                st.link_button(f"📧 Gmail ({email_cliente})", link_gmail, use_container_width=True)
+                params = {"view": "cm", "fs": "1", "to": email_cliente, "su": "Oportunidade - Parceria Elo", "body": script_msg}
+                link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
+                st.link_button(f"📧 Abrir Gmail ({email_cliente})", link_gmail, use_container_width=True)
             else:
                 st.warning("E-mail não cadastrado")
 
@@ -340,22 +347,18 @@ col_config = {
     "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
     "obs": st.column_config.TextColumn("Obs", width="large"),
     
-    # DATAS
+    # DATAS E GAPS
     "data_tentativa_1": st.column_config.DateColumn("Tentativa 1", format="DD/MM/YYYY"),
     "data_tentativa_2": st.column_config.DateColumn("Tentativa 2", format="DD/MM/YYYY"),
     "data_tentativa_3": st.column_config.DateColumn("Tentativa 3", format="DD/MM/YYYY"),
-    
-    # GAPS AGORA SÃO TEXTO LIVRE E EDITÁVEIS
-    "gap_1_2": st.column_config.TextColumn("Intervalo 1-2 (Dias)", help="Digite o intervalo"),
-    "gap_2_3": st.column_config.TextColumn("Intervalo 2-3 (Dias)", help="Digite o intervalo")
+    "gap_1_2": st.column_config.TextColumn("Intervalo 1-2 (Dias)", help="Digite manualmente"),
+    "gap_2_3": st.column_config.TextColumn("Intervalo 2-3 (Dias)", help="Digite manualmente")
 }
 
 cols_display = [
     'pj_id', 'razao_social', 'cnpj', 'status_venda', 
-    'data_tentativa_1', 
-    'gap_1_2', 
-    'data_tentativa_2', 
-    'gap_2_3', 
+    'data_tentativa_1', 'gap_1_2', 
+    'data_tentativa_2', 'gap_2_3', 
     'data_tentativa_3',
     'obs', 'telefone_1', 'Ultima_Compra', 'email_1'
 ]
