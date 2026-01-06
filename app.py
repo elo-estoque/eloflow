@@ -36,7 +36,7 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
     }
     
-    /* Grid de informações dentro do card - Ajustado para colunas lado a lado */
+    /* Grid de informações dentro do card */
     .foco-grid {
         display: flex;
         flex-direction: column;
@@ -462,29 +462,30 @@ with col_left:
         sugestoes_skus, motivo_sugestao = gerar_sugestoes_janeiro(area_cli, df_produtos)
         html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
 
-        html_card = textwrap.dedent(f"""
-        <div class="foco-card">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente['razao_social'][:25]}...</h2>
-                <span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cliente['pj_id']}</span>
-            </div>
-            <div class="foco-grid">
-                <div class="foco-item"><b>📍 Área</b>{cliente['area_atuacao_nome']}</div>
-                <div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
-                <div class="foco-item"><b>📧 Email</b>{email_cliente[:25]}...</div>
-                <div class="foco-item"><b>📅 Compra</b>{cliente['Ultima_Compra']}</div>
-            </div>
-            <div class="sugestao-box">
-                <div class="sugestao-title">🎯 Sugestão ({area_cli})</div>
-                <div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
-                {html_sugestoes}
-            </div>
-            <div class="script-box">
-                <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Vendas:</b>
-                "{script_msg}"
-            </div>
-        </div>
-        """)
+        # ATENÇÃO: HTML ALINHADO À ESQUERDA PARA EVITAR BUG DE INDENTAÇÃO
+        html_card = f"""
+<div class="foco-card">
+<div style="display:flex; justify-content:space-between; align-items:center;">
+<h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente['razao_social'][:25]}...</h2>
+<span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cliente['pj_id']}</span>
+</div>
+<div class="foco-grid">
+<div class="foco-item"><b>📍 Área</b>{cliente['area_atuacao_nome']}</div>
+<div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
+<div class="foco-item"><b>📧 Email</b>{email_cliente[:25]}...</div>
+<div class="foco-item"><b>📅 Compra</b>{cliente['Ultima_Compra']}</div>
+</div>
+<div class="sugestao-box">
+<div class="sugestao-title">🎯 Sugestão ({area_cli})</div>
+<div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
+{html_sugestoes}
+</div>
+<div class="script-box">
+<b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Vendas:</b>
+"{script_msg}"
+</div>
+</div>
+"""
         st.markdown(html_card, unsafe_allow_html=True)
         
         b1, b2 = st.columns(2)
@@ -523,28 +524,29 @@ with col_right:
             
             script_msg_up = "Olá! Estamos atualizando os cadastros da sua empresa, precisa de algo para Janeiro?"
 
-            html_card_up = textwrap.dedent(f"""
-            <div class="foco-card" style="border-left: 6px solid #FFD700;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente_up['razao_social'][:25]}...</h2>
-                    <span style='background:#555; padding:2px 6px; border-radius:4px; font-size:11px; color:#fff;'>ATUALIZAR</span>
-                </div>
-                <div class="foco-grid">
-                    <div class="foco-item"><b>📍 Área</b>{cliente_up['area_atuacao_nome']}</div>
-                    <div class="foco-item"><b>📋 CNPJ</b>{cliente_up['cnpj']}</div>
-                    <div class="foco-item" style="{cor_tel}"><b>📞 Tel</b>{tel_raw if not falta_tel else "⚠️ PENDENTE"}</div>
-                    <div class="foco-item" style="{cor_email}"><b>📧 Email</b>{email_cliente if not falta_email else "⚠️ PENDENTE"}</div>
-                </div>
-                <div class="foco-obs">
-                    <b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Obs:</b>
-                    {obs_cliente if obs_cliente else "Nenhuma."}
-                </div>
-                <div class="script-box" style="border-left: 4px solid #FFD700;">
-                    <b style="color:#FFD700; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Atualização:</b>
-                    "{script_msg_up}"
-                </div>
-            </div>
-            """)
+            # ATENÇÃO: HTML ALINHADO À ESQUERDA PARA EVITAR BUG DE INDENTAÇÃO
+            html_card_up = f"""
+<div class="foco-card" style="border-left: 6px solid #FFD700;">
+<div style="display:flex; justify-content:space-between; align-items:center;">
+<h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente_up['razao_social'][:25]}...</h2>
+<span style='background:#555; padding:2px 6px; border-radius:4px; font-size:11px; color:#fff;'>ATUALIZAR</span>
+</div>
+<div class="foco-grid">
+<div class="foco-item"><b>📍 Área</b>{cliente_up['area_atuacao_nome']}</div>
+<div class="foco-item"><b>📋 CNPJ</b>{cliente_up['cnpj']}</div>
+<div class="foco-item" style="{cor_tel}"><b>📞 Tel</b>{tel_raw if not falta_tel else "⚠️ PENDENTE"}</div>
+<div class="foco-item" style="{cor_email}"><b>📧 Email</b>{email_cliente if not falta_email else "⚠️ PENDENTE"}</div>
+</div>
+<div class="foco-obs">
+<b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Obs:</b>
+{obs_cliente if obs_cliente else "Nenhuma."}
+</div>
+<div class="script-box" style="border-left: 4px solid #FFD700;">
+<b style="color:#FFD700; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Atualização:</b>
+"{script_msg_up}"
+</div>
+</div>
+"""
             st.markdown(html_card_up, unsafe_allow_html=True)
             
             b1_up, b2_up = st.columns(2)
