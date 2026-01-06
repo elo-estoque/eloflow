@@ -6,7 +6,7 @@ from datetime import datetime, date
 import os
 import io
 import urllib.parse
-import textwrap  # <--- IMPORTAÇÃO ESSENCIAL PARA RESOLVER O BLOCO DE CÓDIGO
+import textwrap
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Elo Flow - Prospecção", layout="wide", page_icon="🦅")
@@ -441,8 +441,20 @@ if selecionado and selecionado != "Selecione...":
     status_cli = cliente['status_venda']
     tel_clean = limpar_telefone(tel_raw)
     
-    # Lógica de Script Base
-    if dias != "Muitos" and dias > 30:
+    # --- VERIFICAÇÃO DE DADOS FALTANTES (ATUALIZAÇÃO) ---
+    # Verifica se telefone é muito curto ou vazio
+    falta_telefone = (not tel_clean or len(tel_clean) < 8)
+    # Verifica se email é vazio, nan ou não tem @
+    falta_email = (not email_cliente or email_cliente.lower() == 'nan' or '@' not in email_cliente)
+    
+    # Cores para o HTML (Amarelo se faltar, Branco se ok)
+    cor_tel_style = "color: #FFD700 !important; font-weight: bold;" if falta_telefone else ""
+    cor_email_style = "color: #FFD700 !important; font-weight: bold;" if falta_email else ""
+    
+    # Lógica de Script (ALTERADA PARA ATUALIZAÇÃO CADASTRO SE FALTAR DADOS)
+    if falta_telefone or falta_email:
+        script_msg = "Olá! Tudo bem? Sou da Elo. Estamos entrando em contato para atualizar os cadastros da sua empresa e gostaríamos de saber se você precisa de algo para Janeiro?"
+    elif dias != "Muitos" and dias > 30:
         script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada agora em Janeiro."
     elif "Novo" in cliente['status_venda']:
         script_msg = f"Olá! Vi que vocês atuam com {area_cli} e gostaria de apresentar a Elo."
@@ -454,7 +466,7 @@ if selecionado and selecionado != "Selecione...":
     html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
 
     with col_detalhe:
-        # AQUI ESTA O TRUQUE CORRIGIDO: Recuo removido nas tags internas
+        # HTML SEM INDENTAÇÃO INTERNA
         html_card = textwrap.dedent(f"""
 <div class="foco-card">
 <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -464,8 +476,8 @@ if selecionado and selecionado != "Selecione...":
 <div class="foco-grid">
 <div class="foco-item"><b>📍 Área / Segmento</b>{cliente['area_atuacao_nome']}</div>
 <div class="foco-item"><b>📋 CNPJ</b>{cliente['cnpj']}</div>
-<div class="foco-item"><b>📞 Telefone</b>{tel_raw}</div>
-<div class="foco-item"><b>📧 E-mail</b>{email_cliente}</div>
+<div class="foco-item" style="{cor_tel_style}"><b>📞 Telefone</b>{tel_raw if not falta_telefone else "⚠️ PENDENTE"}</div>
+<div class="foco-item" style="{cor_email_style}"><b>📧 E-mail</b>{email_cliente if not falta_email else "⚠️ PENDENTE"}</div>
 <div class="foco-item"><b>📅 Última Compra</b>{cliente['Ultima_Compra']} <span style="color:#ff6b6b; font-size:12px;">({dias} dias)</span></div>
 <div class="foco-item"><b>📊 Status Atual</b>{status_cli}</div>
 </div>
@@ -492,11 +504,11 @@ if selecionado and selecionado != "Selecione...":
                 link_wpp = f"https://wa.me/55{tel_clean}?text={script_msg.replace(' ', '%20')}"
                 st.link_button(f"💬 Abrir WhatsApp ({tel_raw})", link_wpp, type="primary", use_container_width=True)
             else:
-                st.warning(f"Telefone inválido: {tel_raw}")
+                st.warning(f"Telefone inválido/vazio")
         
         with b2:
             if email_cliente and email_cliente.lower() != "nan" and "@" in email_cliente:
-                params = {"view": "cm", "fs": "1", "to": email_cliente, "su": f"Oportunidade Janeiro - {cliente['razao_social']}", "body": script_msg}
+                params = {"view": "cm", "fs": "1", "to": email_cliente, "su": f"Atualização Cadastral - {cliente['razao_social']}", "body": script_msg}
                 link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
                 st.link_button(f"📧 Abrir Gmail ({email_cliente})", link_gmail, use_container_width=True)
             else:
