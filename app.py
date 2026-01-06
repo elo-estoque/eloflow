@@ -454,41 +454,36 @@ if selecionado and selecionado != "Selecione...":
     html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
 
     with col_detalhe:
-        # AQUI ESTA O TRUQUE: textwrap.dedent remove a indentação inicial!
-        # Isso garante que o Streamlit não confunda o HTML com bloco de código.
+        # AQUI ESTA O TRUQUE CORRIGIDO: Recuo removido nas tags internas
         html_card = textwrap.dedent(f"""
-            <div class="foco-card">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <h2 style='margin:0; color: #FFF; font-size: 24px;'>🏢 {cliente['razao_social']}</h2>
-                    <span style='background:#333; padding:4px 8px; border-radius:4px; font-size:12px; color:#aaa;'>ID: {cliente['pj_id']}</span>
-                </div>
-                
-                <div class="foco-grid">
-                    <div class="foco-item"><b>📍 Área / Segmento</b>{cliente['area_atuacao_nome']}</div>
-                    <div class="foco-item"><b>📋 CNPJ</b>{cliente['cnpj']}</div>
-                    <div class="foco-item"><b>📞 Telefone</b>{tel_raw}</div>
-                    <div class="foco-item"><b>📧 E-mail</b>{email_cliente}</div>
-                    <div class="foco-item"><b>📅 Última Compra</b>{cliente['Ultima_Compra']} <span style="color:#ff6b6b; font-size:12px;">({dias} dias)</span></div>
-                    <div class="foco-item"><b>📊 Status Atual</b>{status_cli}</div>
-                </div>
-
-                <div class="sugestao-box">
-                    <div class="sugestao-title">🎯 Oportunidade de Janeiro ({area_cli})</div>
-                    <div style="margin-bottom:10px; font-size:14px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
-                    {html_sugestoes}
-                </div>
-
-                <div class="foco-obs">
-                    <b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Observação Salva:</b>
-                    {obs_cliente if obs_cliente else "Nenhuma observação registrada."}
-                </div>
-                
-                <div class="script-box">
-                    <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Sugerido:</b>
-                    "{script_msg}"
-                </div>
-            </div>
-        """)
+<div class="foco-card">
+<div style="display:flex; justify-content:space-between; align-items:center;">
+<h2 style='margin:0; color: #FFF; font-size: 24px;'>🏢 {cliente['razao_social']}</h2>
+<span style='background:#333; padding:4px 8px; border-radius:4px; font-size:12px; color:#aaa;'>ID: {cliente['pj_id']}</span>
+</div>
+<div class="foco-grid">
+<div class="foco-item"><b>📍 Área / Segmento</b>{cliente['area_atuacao_nome']}</div>
+<div class="foco-item"><b>📋 CNPJ</b>{cliente['cnpj']}</div>
+<div class="foco-item"><b>📞 Telefone</b>{tel_raw}</div>
+<div class="foco-item"><b>📧 E-mail</b>{email_cliente}</div>
+<div class="foco-item"><b>📅 Última Compra</b>{cliente['Ultima_Compra']} <span style="color:#ff6b6b; font-size:12px;">({dias} dias)</span></div>
+<div class="foco-item"><b>📊 Status Atual</b>{status_cli}</div>
+</div>
+<div class="sugestao-box">
+<div class="sugestao-title">🎯 Oportunidade de Janeiro ({area_cli})</div>
+<div style="margin-bottom:10px; font-size:14px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
+{html_sugestoes}
+</div>
+<div class="foco-obs">
+<b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Observação Salva:</b>
+{obs_cliente if obs_cliente else "Nenhuma observação registrada."}
+</div>
+<div class="script-box">
+<b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Sugerido:</b>
+"{script_msg}"
+</div>
+</div>
+""")
         st.markdown(html_card, unsafe_allow_html=True)
         
         b1, b2 = st.columns(2)
