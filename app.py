@@ -17,6 +17,7 @@ st.markdown("""
     :root {
         --brand-dark: #050505; --brand-card: #121212; --brand-wine: #E31937;
         --text-main: #E5E7EB; --text-muted: #9CA3AF; --border-color: rgba(255, 255, 255, 0.1);
+        --highlight-bg: #2d2610; --highlight-border: #f59e0b;
     }
     .stApp { background-color: var(--brand-dark); color: var(--text-main); font-family: 'Inter', sans-serif; }
     
@@ -28,7 +29,7 @@ st.markdown("""
     div.stButton > button { background-color: var(--brand-wine); color: white; border: none; width: 100%; border-radius: 6px; }
     div.stButton > button:hover { background-color: #C2132F; color: white; border-color: #C2132F; }
     
-    /* ESTILO DO CARD DE FOCO CORRIGIDO */
+    /* CARD DE FOCO */
     .foco-card {
         background-color: #1A1A1A;
         padding: 20px;
@@ -50,6 +51,33 @@ st.markdown("""
         padding: 8px 12px;
         border-radius: 6px;
     }
+    
+    /* BOX DE SUGESTÃO (SAZONALIDADE) */
+    .sugestao-box {
+        background-color: #2e1d05; /* Fundo amarelado escuro */
+        border: 1px solid #b45309;
+        border-radius: 8px;
+        padding: 15px;
+        margin-top: 15px;
+    }
+    .sugestao-title {
+        color: #fbbf24;
+        font-weight: 700;
+        font-size: 16px;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .sku-item {
+        background-color: rgba(251, 191, 36, 0.1);
+        padding: 4px 8px;
+        border-radius: 4px;
+        margin-bottom: 4px;
+        font-size: 14px;
+        color: #fcd34d;
+    }
+
     .foco-obs {
         background-color: #222;
         padding: 12px;
@@ -76,9 +104,11 @@ if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
 DB_FILE = os.path.join(DATA_DIR, "db_elo_flow.csv")        
-CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")    
+CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")
+PRODUTOS_FILE = os.path.join(DATA_DIR, "mais_pedidos.csv") # Nome padrão salvo
 
 # --- FUNÇÕES ---
+
 def carregar_crm_db():
     cols_padrao = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 'data_interacao', 
                    'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
@@ -122,7 +152,7 @@ def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
-# --- LEITURA DO EXCEL ---
+# --- LEITURA DO EXCEL DE CLIENTES ---
 @st.cache_data
 def carregar_excel(path_or_file):
     try:
@@ -148,6 +178,7 @@ def carregar_excel(path_or_file):
                 df['Ultima_Compra'] = "-"
                 df['dias_sem_compra'] = 9999
             
+            # Normalização de colunas
             cols_check = {'area_atuacao_nome': 'Indefinido', 'telefone_1': '', 'email_1': '', 'pj_id': '', 'razao_social': ''}
             for col, val in cols_check.items():
                 if col not in df.columns: df[col] = val
@@ -165,17 +196,107 @@ def carregar_excel(path_or_file):
         return df_final
 
     except Exception as e:
+        st.error(f"Erro ao ler excel clientes: {e}")
         return None
+
+# --- LEITURA DO EXCEL DE PRODUTOS (MAIS PEDIDOS) ---
+@st.cache_data
+def carregar_produtos_sugestao(path_or_file):
+    try:
+        # Tenta ler csv ou excel
+        if str(path_or_file).endswith('.csv'):
+            df = pd.read_csv(path_or_file, sep=None, engine='python') # Tenta detectar separador
+        else:
+            df = pd.read_excel(path_or_file)
+            
+        # Normalizar colunas para maiusculo para facilitar busca
+        df.columns = [c.upper().strip() for c in df.columns]
+        
+        # Identificar colunas chaves
+        col_desc = next((c for c in df.columns if 'DESC' in c or 'NOME' in c or 'PRODUTO' in c), None)
+        col_id = next((c for c in df.columns if 'COD' in c or 'SKU' in c), None)
+        
+        if col_desc:
+            df = df.rename(columns={col_desc: 'PRODUTO_NOME'})
+        if col_id:
+            df = df.rename(columns={col_id: 'SKU'})
+            
+        return df
+    except Exception as e:
+        return None
+
+# --- MOTOR DE SUGESTÃO (INTELIGÊNCIA DE VENDAS) ---
+def gerar_sugestoes_janeiro(area_atuacao, df_produtos):
+    """
+    Filtra os produtos 'Mais Pedidos' baseado na área de atuação do cliente
+    e na sazonalidade de Janeiro.
+    """
+    if df_produtos is None or df_produtos.empty:
+        return [], "Sem catálogo carregado."
+
+    # Mapa de Palavras-Chave por Área
+    # Se a área do cliente contiver X, sugerir produtos com Y
+    regras_janeiro = {
+        'EDUCACIONAL': ['PAPEL', 'CANETA', 'CADERNO', 'ESCOLA', 'LÁPIS', 'SULFITE', 'RESMA'],
+        'ESCOLA': ['PAPEL', 'CANETA', 'CADERNO', 'ESCOLA', 'LÁPIS', 'SULFITE', 'RESMA'],
+        'INDÚSTRIA': ['EPI', 'LUVA', 'OCULOS', 'CAPACETE', 'FERRAMENTA', 'FITA', 'ADHESIVO', 'MANUTENCAO'],
+        'INDUSTRIA': ['EPI', 'LUVA', 'OCULOS', 'CAPACETE', 'FERRAMENTA', 'FITA', 'ADHESIVO', 'MANUTENCAO'],
+        'SAÚDE': ['LUVA', 'MASCARA', 'HIGIENE', 'ALCOOL', 'DESCARTAVEL', 'SERINGA'],
+        'FARMÁCIA': ['SOLAR', 'HIDRATANTE', 'VITAMINA', 'VERAO'],
+        'FARMACIA': ['SOLAR', 'HIDRATANTE', 'VITAMINA', 'VERAO'],
+        'TRANSPORTE': ['OLEO', 'PNEU', 'MANUTENCAO', 'LIMPEZA', 'AUTOMOTIVO', 'GRAXA'],
+        'LOGÍSTICA': ['FITA', 'ESTILETE', 'EMBALAGEM', 'PLASTICO', 'PALETE'],
+        'COMÉRCIO': ['BOBINA', 'EMBALAGEM', 'SACOLA', 'ETIQUETA'],
+        'SERVIÇOS': ['CAFE', 'COPO', 'LIMPEZA', 'PAPEL', 'ESCRITORIO']
+    }
+
+    area_upper = str(area_atuacao).upper()
+    keywords = []
+
+    # Tenta dar match na área
+    matched_key = "Geral"
+    for key, words in regras_janeiro.items():
+        if key in area_upper:
+            keywords = words
+            matched_key = key
+            break
+    
+    # Se não achou regra específica, usa regra geral de Janeiro (Verão/Volta aulas)
+    if not keywords:
+        keywords = ['PAPEL', 'VERAO', 'VENTILADOR', 'AGUA', 'ORGANIZADOR']
+        matched_key = "Geral (Janeiro)"
+
+    # Filtra o DataFrame
+    # Cria uma máscara booleana: True se o nome do produto contiver QUALQUER uma das keywords
+    mask = df_produtos['PRODUTO_NOME'].astype(str).str.upper().apply(lambda x: any(k in x for k in keywords))
+    
+    df_sugestao = df_produtos[mask].head(5) # Pega os top 5 dessa categoria
+    
+    lista_skus = []
+    if not df_sugestao.empty:
+        for _, row in df_sugestao.iterrows():
+            nome = row['PRODUTO_NOME']
+            sku = row.get('SKU', '-')
+            lista_skus.append(f"📦 {sku} - {nome}")
+    else:
+        lista_skus.append("⚠️ Nenhum produto específico encontrado para esta área na lista de Mais Pedidos.")
+
+    pitch = f"Foco em produtos de {matched_key} para Janeiro."
+    return lista_skus, pitch
+
 
 # --- SIDEBAR & UPLOAD ---
 st.sidebar.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
 arquivo_carregado = None
+produtos_carregado = None
 
+# Upload Clientes
+st.sidebar.subheader("1. Base de Clientes")
 if os.path.exists(CACHE_FILE):
-    st.sidebar.success("✅ Lista carregada da memória!")
-    if st.sidebar.button("🗑️ Trocar Lista/Arquivo"):
+    st.sidebar.success("✅ Clientes carregados!")
+    if st.sidebar.button("🗑️ Trocar Lista Clientes"):
         try:
             os.remove(CACHE_FILE)
             carregar_excel.clear() 
@@ -183,24 +304,50 @@ if os.path.exists(CACHE_FILE):
         except: pass
     arquivo_carregado = CACHE_FILE
 else:
-    uploaded_file = st.sidebar.file_uploader("📂 Importar Nova Tabela (.xlsx)", type=["xlsx"])
+    uploaded_file = st.sidebar.file_uploader("📂 Importar Planilha Clientes (.xlsx)", type=["xlsx"], key="up_cli")
     if uploaded_file:
         with open(CACHE_FILE, "wb") as f:
             f.write(uploaded_file.getbuffer())
         carregar_excel.clear() 
         st.rerun()
 
+# Upload Produtos (Mais Pedidos)
+st.sidebar.markdown("---")
+st.sidebar.subheader("2. Tabela Mais Pedidos")
+if os.path.exists(PRODUTOS_FILE):
+    st.sidebar.success("✅ Produtos carregados!")
+    if st.sidebar.button("🗑️ Trocar Tabela Produtos"):
+        try:
+            os.remove(PRODUTOS_FILE)
+            carregar_produtos_sugestao.clear()
+            st.rerun()
+        except: pass
+    produtos_carregado = PRODUTOS_FILE
+else:
+    uploaded_prod = st.sidebar.file_uploader("📂 Importar Mais Pedidos (.csv/.xlsx)", type=["xlsx", "csv"], key="up_prod")
+    if uploaded_prod:
+        # Salva como CSV independente da origem pra padronizar nome
+        if uploaded_prod.name.endswith('.csv'):
+            with open(PRODUTOS_FILE, "wb") as f:
+                f.write(uploaded_prod.getbuffer())
+        else:
+            # Se for excel, lê e salva como csv pra facilitar
+            df_temp = pd.read_excel(uploaded_prod)
+            df_temp.to_csv(PRODUTOS_FILE, index=False)
+            
+        carregar_produtos_sugestao.clear()
+        st.rerun()
+
 if not arquivo_carregado:
-    st.info("👆 Por favor, importe a planilha na barra lateral.")
+    st.info("👆 Por favor, comece importando a planilha de CLIENTES na barra lateral.")
     st.stop()
 
+# --- CARGA DOS DADOS ---
 df_raw = carregar_excel(arquivo_carregado)
+df_produtos = carregar_produtos_sugestao(produtos_carregado) if produtos_carregado else None
 
 if df_raw is None or df_raw.empty:
-    st.error("Erro ao ler o arquivo. Tente clicar em 'Trocar Lista' e enviar novamente.")
-    if os.path.exists(CACHE_FILE): 
-        os.remove(CACHE_FILE)
-        carregar_excel.clear()
+    st.error("Erro ao ler o arquivo de clientes.")
     st.stop()
 
 if 'cnpj' in df_raw.columns:
@@ -208,7 +355,7 @@ if 'cnpj' in df_raw.columns:
 else:
     df_raw['cnpj'] = "-"
 
-# Merge com CRM
+# Merge com CRM Local
 df_crm = carregar_crm_db()
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 
@@ -250,13 +397,13 @@ if 'dias_sem_compra' in df_view.columns:
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Total Visível", len(df_view))
-k2.metric("Oportunidades (Inativos)", len(df_view[df_view['Categoria_Cliente'].str.contains('Inativo')]))
+k2.metric("Oportunidades (Inativos)", len(df_view[df_view['Categoria_Cliente'].str.contains('Inativo', na=False)]))
 k3.metric("Pendentes de Contato", len(df_view[df_view['status_venda'] == 'Não contatado']))
 k4.metric("Em Negociação", len(df_view[df_view['status_venda'] == 'Em Negociação']))
 
 st.divider()
 
-# --- MODO DE ATAQUE (LAYOUT CORRIGIDO) ---
+# --- MODO DE ATAQUE (LAYOUT COM INTELIGÊNCIA) ---
 st.markdown("### 🚀 Modo de Ataque (Foco)")
 col_sel, col_detalhe = st.columns([1, 2])
 
@@ -269,42 +416,55 @@ if selecionado and selecionado != "Selecione...":
     cliente = df_view[df_view['label_select'] == selecionado].iloc[0]
     
     dias = cliente['dias_sem_compra'] if cliente['dias_sem_compra'] < 9000 else "Muitos"
-    area_cli = cliente['area_atuacao_nome']
+    area_cli = str(cliente['area_atuacao_nome'])
     tel_raw = str(cliente['telefone_1'])
     email_cliente = str(cliente['email_1']).strip()
     obs_cliente = str(cliente['obs']).strip()
     status_cli = cliente['status_venda']
     tel_clean = limpar_telefone(tel_raw)
     
+    # Lógica de Script Base
     if dias != "Muitos" and dias > 30:
-        script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada."
+        script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada agora em Janeiro."
     elif "Novo" in cliente['status_venda']:
         script_msg = f"Olá! Vi que vocês atuam com {area_cli} e gostaria de apresentar a Elo."
     else:
-        script_msg = f"Olá! Gostaria de falar sobre oportunidades para a área de {area_cli}."
+        script_msg = f"Olá! Gostaria de falar sobre oportunidades de Janeiro para a área de {area_cli}."
+
+    # --- INTELIGÊNCIA DE PRODUTO ---
+    sugestoes_skus, motivo_sugestao = gerar_sugestoes_janeiro(area_cli, df_produtos)
+    html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
 
     with col_detalhe:
-        # AQUI ESTAVA O PROBLEMA: INDENTAÇÃO DENTRO DA STRING HTML.
-        # Agora está formatado sem espaços no início das linhas para garantir que o Markdown renderize certo.
+        # Card HTML
         html_card = f"""
 <div class="foco-card">
-<h2 style='margin:0; color: #FFF;'>🏢 {cliente['razao_social']}</h2>
-<p style='color: #999; margin-top: -5px;'>ID: {cliente['pj_id']}</p>
-<div class="foco-grid">
-<div class="foco-item"><b>📋 CNPJ:</b> {cliente['cnpj']}</div>
-<div class="foco-item"><b>📍 Área:</b> {cliente['area_atuacao_nome']}</div>
-<div class="foco-item"><b>📞 Tel:</b> {tel_raw}</div>
-<div class="foco-item"><b>📧 Email:</b> {email_cliente}</div>
-<div class="foco-item"><b>📅 Última Compra:</b> {cliente['Ultima_Compra']} <b style="color:#E31937">({dias} dias)</b></div>
-<div class="foco-item"><b>📊 Status:</b> {status_cli}</div>
-</div>
-<div class="foco-obs">
-<b>📝 Observação Salva:</b><br>
-<i>{obs_cliente if obs_cliente else "Nenhuma observação registrada."}</i>
-</div>
-<div class="script-box">
-<p style='margin:0;'>🗣️ <b>Script Sugerido:</b><br><i>"{script_msg}"</i></p>
-</div>
+    <h2 style='margin:0; color: #FFF;'>🏢 {cliente['razao_social']}</h2>
+    <p style='color: #999; margin-top: -5px;'>ID: {cliente['pj_id']}</p>
+    
+    <div class="foco-grid">
+        <div class="foco-item"><b>📋 CNPJ:</b> {cliente['cnpj']}</div>
+        <div class="foco-item"><b>📍 Área:</b> {cliente['area_atuacao_nome']}</div>
+        <div class="foco-item"><b>📞 Tel:</b> {tel_raw}</div>
+        <div class="foco-item"><b>📧 Email:</b> {email_cliente}</div>
+        <div class="foco-item"><b>📅 Última Compra:</b> {cliente['Ultima_Compra']} <b style="color:#E31937">({dias} dias)</b></div>
+        <div class="foco-item"><b>📊 Status:</b> {status_cli}</div>
+    </div>
+
+    <div class="sugestao-box">
+        <div class="sugestao-title">🎯 Oportunidade de Janeiro ({area_cli})</div>
+        <div style="margin-bottom:8px; font-size:14px; color:#ddd;"><i>Motivo: {motivo_sugestao}</i></div>
+        {html_sugestoes}
+    </div>
+
+    <div class="foco-obs">
+        <b>📝 Observação Salva:</b><br>
+        <i>{obs_cliente if obs_cliente else "Nenhuma observação registrada."}</i>
+    </div>
+    
+    <div class="script-box">
+        <p style='margin:0;'>🗣️ <b>Script Sugerido:</b><br><i>"{script_msg}"</i></p>
+    </div>
 </div>
 """
         st.markdown(html_card, unsafe_allow_html=True)
@@ -319,7 +479,7 @@ if selecionado and selecionado != "Selecione...":
         
         with b2:
             if email_cliente and email_cliente.lower() != "nan" and "@" in email_cliente:
-                params = {"view": "cm", "fs": "1", "to": email_cliente, "su": "Oportunidade - Parceria Elo", "body": script_msg}
+                params = {"view": "cm", "fs": "1", "to": email_cliente, "su": f"Oportunidade Janeiro - {cliente['razao_social']}", "body": script_msg}
                 link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
                 st.link_button(f"📧 Abrir Gmail ({email_cliente})", link_gmail, use_container_width=True)
             else:
@@ -360,7 +520,7 @@ cols_display = [
     'data_tentativa_1', 'gap_1_2', 
     'data_tentativa_2', 'gap_2_3', 
     'data_tentativa_3',
-    'obs', 'telefone_1', 'Ultima_Compra', 'email_1'
+    'obs', 'telefone_1', 'Ultima_Compra', 'email_1', 'area_atuacao_nome'
 ]
 
 df_edit = st.data_editor(
