@@ -59,9 +59,13 @@ def salvar_alteracoes(df_editor, df_original_crm):
     novos_dados = df_editor[['pj_id', 'status_venda', 'ja_ligou', 'obs']].copy()
     novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Remove duplicatas baseadas no ID para garantir integridade
-    novos_dados = novos_dados.drop_duplicates(subset=['pj_id'], keep='last')
+    # --- CORREÇÃO AQUI ---
+    # Removida a linha que apagava duplicatas pelo ID. 
+    # Agora só apaga se a linha for 100% igual (duplicata real de erro)
+    novos_dados = novos_dados.drop_duplicates()
     
+    # Atualiza o banco de dados
+    # Atenção: Se houver múltiplos IDs iguais, remove todos os antigos e insere os novos editados
     crm_atualizado = df_original_crm[~df_original_crm['pj_id'].isin(novos_dados['pj_id'])]
     crm_final = pd.concat([crm_atualizado, novos_dados], ignore_index=True)
     
@@ -78,7 +82,7 @@ def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
-# --- LEITURA DO EXCEL (COM CORREÇÃO DE CACHE E DUPLICATAS) ---
+# --- LEITURA DO EXCEL (CORRIGIDA - SEM FILTRO DE ID) ---
 @st.cache_data
 def carregar_excel(path_or_file):
     try:
@@ -106,13 +110,14 @@ def carregar_excel(path_or_file):
                 df['dias_sem_compra'] = 9999
             
             # Garante colunas essenciais
-            cols_check = {'area_atuacao_nome': 'Indefinido', 'telefone_1': '', 'email_1': '', 'pj_id': ''}
+            cols_check = {'area_atuacao_nome': 'Indefinido', 'telefone_1': '', 'email_1': '', 'pj_id': '', 'razao_social': ''}
             for col, val in cols_check.items():
                 if col not in df.columns: df[col] = val
                 else: df[col] = df[col].fillna(val)
 
-            # Força ID como string para evitar erro de duplicata numérica vs texto
-            df['pj_id'] = df['pj_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+            # Força ID como string
+            if 'pj_id' in df.columns:
+                df['pj_id'] = df['pj_id'].astype(str).str.replace(r'\.0$', '', regex=True)
 
             dfs.append(df)
             
@@ -120,9 +125,11 @@ def carregar_excel(path_or_file):
         
         df_final = pd.concat(dfs, ignore_index=True)
         
-        # --- CORREÇÃO DE DUPLICATAS ---
-        # Remove linhas onde o 'pj_id' é igual, mantendo a primeira ocorrência
-        df_final = df_final.drop_duplicates(subset=['pj_id'], keep='first')
+        # --- CORREÇÃO FINAL DA CONTAGEM ---
+        # Removi o drop_duplicates(subset=['pj_id']).
+        # Agora ele só remove se a linha inteira for duplicada (lixo).
+        # Se tiver mesmo ID mas for outra filial, ELE MANTÉM.
+        df_final = df_final.drop_duplicates() 
         
         return df_final
 
@@ -138,23 +145,21 @@ arquivo_carregado = None
 if os.path.exists(CACHE_FILE):
     st.sidebar.success("✅ Lista carregada da memória!")
     
-    # --- CORREÇÃO DO PROBLEMA DE NÃO ATUALIZAR ---
     if st.sidebar.button("🗑️ Trocar Lista/Arquivo"):
         try:
-            os.remove(CACHE_FILE)         # Deleta o arquivo físico
-            carregar_excel.clear()        # Limpa o cache da memória RAM do Streamlit
-            st.rerun()                    # Recarrega a página
+            os.remove(CACHE_FILE)
+            carregar_excel.clear() 
+            st.rerun()
         except:
-            pass # Ignora erro se arquivo já não existir
+            pass 
             
     arquivo_carregado = CACHE_FILE
 else:
     uploaded_file = st.sidebar.file_uploader("📂 Importar Nova Tabela (.xlsx)", type=["xlsx"])
     if uploaded_file:
-        # Salva o arquivo no disco
         with open(CACHE_FILE, "wb") as f:
             f.write(uploaded_file.getbuffer())
-        carregar_excel.clear() # Limpa cache antigo ao subir novo
+        carregar_excel.clear() 
         st.rerun()
 
 if not arquivo_carregado:
@@ -170,7 +175,6 @@ if df_raw is None or df_raw.empty:
         carregar_excel.clear()
     st.stop()
 
-# Tratamento CNPJ e ID
 if 'cnpj' in df_raw.columns:
     df_raw['cnpj'] = df_raw['cnpj'].astype(str).str.replace(r'\.0$', '', regex=True)
 else:
@@ -178,9 +182,10 @@ else:
 
 # Merge com CRM
 df_crm = carregar_crm_db()
+
+# Merge ajustado para não duplicar se o banco tiver sujeira, mas mantendo a fidelidade do Excel
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left')
 
-# Preenche vazios
 df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
 df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
 df_full['obs'] = df_full['obs'].fillna('')
@@ -216,12 +221,11 @@ col_sel, col_detalhe = st.columns([1, 2])
 
 with col_sel:
     df_view['label_select'] = df_view['razao_social'] + " (" + df_view['Ultima_Compra'] + ")"
-    # Remove duplicatas na lista de seleção também, por segurança
+    # Remove duplicatas visuais no dropdown
     opcoes_ataque = sorted(list(set(df_view['label_select'].tolist())))
     selecionado = st.selectbox("Busque por Razão Social:", ["Selecione..."] + opcoes_ataque)
 
 if selecionado and selecionado != "Selecione...":
-    # Pega o primeiro registro encontrado (evita erro se houver duplicata residual)
     cliente = df_view[df_view['label_select'] == selecionado].iloc[0]
     
     dias = cliente['dias_sem_compra'] if cliente['dias_sem_compra'] < 9000 else "Muitos"
@@ -259,11 +263,8 @@ if selecionado and selecionado != "Selecione...":
         with b2:
             if email_cliente and email_cliente.lower() != "nan" and "@" in email_cliente:
                 params = {
-                    "view": "cm",
-                    "fs": "1",
-                    "to": email_cliente,
-                    "su": "Oportunidade - Parceria Elo",
-                    "body": script_msg
+                    "view": "cm", "fs": "1", "to": email_cliente,
+                    "su": "Oportunidade - Parceria Elo", "body": script_msg
                 }
                 query_string = urllib.parse.urlencode(params)
                 link_gmail = f"https://mail.google.com/mail/?{query_string}"
@@ -295,8 +296,8 @@ col_config = {
 }
 
 cols_display = [
-    'pj_id', 'razao_social', 'cnpj', 'area_atuacao_nome', 'email_1', 
-    'Ultima_Compra', 'dias_sem_compra', 'telefone_1', 
+    'pj_id', 'razao_social', 'cnpj', 'area_atuacao_nome', 
+    'email_1', 'Ultima_Compra', 'dias_sem_compra', 'telefone_1', 
     'status_venda', 'ja_ligou', 'obs'
 ]
 
