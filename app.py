@@ -25,101 +25,86 @@ st.markdown("""
     
     section[data-testid="stSidebar"] { background-color: #121212; border-right: 1px solid #333; }
     
-    /* Estilo dos Tabs */
-    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: #151515;
-        border-radius: 4px 4px 0px 0px;
-        gap: 1px;
-        padding-top: 10px;
-        padding-bottom: 10px;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #E31937 !important;
-        color: white !important;
-    }
-
-    /* Estilo dos Cards (Fundo Escuro com Texto Branco Forçado) */
+    /* Estilo dos Cards */
     .foco-card {
         background-color: #151515 !important;
-        padding: 24px;
+        padding: 20px;
         border-radius: 12px;
         border: 1px solid #333;
         border-left: 6px solid #E31937;
         margin-bottom: 20px;
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
     }
     
-    /* Grid de informações dentro do card */
+    /* Grid de informações dentro do card - Ajustado para colunas lado a lado */
     .foco-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr; /* Duas colunas */
-        gap: 15px;
-        margin-top: 20px;
-        font-size: 15px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 15px;
+        font-size: 14px;
     }
     
-    /* Itens individuais (Caixinhas cinzas) */
+    /* Itens individuais */
     .foco-item {
         background-color: #252525 !important;
-        color: #FFFFFF !important; /* Texto BRANCO forçado */
-        padding: 12px 16px;
-        border-radius: 8px;
+        color: #FFFFFF !important;
+        padding: 10px 14px;
+        border-radius: 6px;
         border: 1px solid #3a3a3a;
-        line-height: 1.4;
+        line-height: 1.3;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
     }
 
-    /* Labels dentro dos itens (Negrito Vermelho) */
     .foco-item b {
-        color: #E31937 !important; /* Vermelho da marca */
+        color: #E31937 !important;
         font-weight: 700;
-        display: block; /* Quebra linha para o título ficar em cima */
-        font-size: 12px;
+        font-size: 11px;
         text-transform: uppercase;
-        margin-bottom: 4px;
+        margin-right: 10px;
+        min-width: 80px;
     }
     
-    /* Caixa de Sugestão (Amarela) - Destaque Sazonalidade */
+    /* Caixa de Sugestão */
     .sugestao-box {
         background-color: #2D2006 !important;
         border: 1px solid #B45309;
         border-radius: 8px;
-        padding: 16px;
-        margin-top: 20px;
+        padding: 12px;
+        margin-top: 15px;
     }
     .sugestao-title {
-        color: #FBBF24 !important; /* Amarelo ouro */
+        color: #FBBF24 !important;
         font-weight: 700;
-        font-size: 16px;
-        margin-bottom: 12px;
-        display: flex; align-items: center; gap: 8px;
+        font-size: 14px;
+        margin-bottom: 8px;
     }
     .sku-item {
         background-color: rgba(251, 191, 36, 0.15);
-        color: #FCD34D !important; /* Texto amarelo claro */
-        padding: 6px 10px;
+        color: #FCD34D !important;
+        padding: 4px 8px;
         border-radius: 4px;
-        margin-bottom: 6px;
-        font-size: 14px;
+        margin-bottom: 4px;
+        font-size: 13px;
         border: 1px solid rgba(251, 191, 36, 0.2);
     }
 
     /* Box de Observação e Script */
     .foco-obs, .script-box {
         background-color: #1E1E1E !important;
-        padding: 15px;
+        padding: 12px;
         border-radius: 8px;
-        margin-top: 20px;
+        margin-top: 15px;
         border: 1px solid #333;
         color: #E0E0E0 !important;
-        font-size: 14px;
+        font-size: 13px;
         font-style: italic;
     }
     .script-box {
         border-left: 4px solid #E31937;
-        background-color: #2A1015 !important; /* Fundo avermelhado bem escuro */
+        background-color: #2A1015 !important;
     }
     
     /* Botões */
@@ -443,19 +428,18 @@ df_view['falta_telefone'] = df_view['tel_clean'].apply(lambda x: not x or len(x)
 df_view['falta_email'] = df_view['email_1'].apply(lambda x: not str(x) or str(x).lower() == 'nan' or '@' not in str(x))
 df_needs_update = df_view[(df_view['falta_telefone']) | (df_view['falta_email'])].copy()
 
-# --- ABAS DE NAVEGAÇÃO ---
-tab_ataque, tab_update, tab_lista = st.tabs(["🚀 Modo de Ataque", "📝 Modo Atualização", "📋 Lista Geral"])
+# =========================================================
+#  LADO A LADO: MODO DE ATAQUE (ESQUERDA) | MODO ATUALIZAÇÃO (DIREITA)
+# =========================================================
+col_left, col_right = st.columns([1, 1], gap="large")
 
-# === ABA 1: MODO DE ATAQUE (VENDAS) ===
-with tab_ataque:
-    st.markdown("### ⚡ Foco em Vendas e Recuperação")
+# --- COLUNA DA ESQUERDA: MODO DE ATAQUE ---
+with col_left:
+    st.subheader("🚀 Modo de Ataque (Vendas)")
     
-    col_sel, col_detalhe = st.columns([1, 2])
-    
-    with col_sel:
-        df_view['label_select'] = df_view['razao_social'] + " (" + df_view['Ultima_Compra'] + ")"
-        opcoes_ataque = sorted(list(set(df_view['label_select'].tolist())))
-        selecionado = st.selectbox("Busque por Razão Social (Vendas):", ["Selecione..."] + opcoes_ataque, key="sel_ataque")
+    df_view['label_select'] = df_view['razao_social'] + " (" + df_view['Ultima_Compra'] + ")"
+    opcoes_ataque = sorted(list(set(df_view['label_select'].tolist())))
+    selecionado = st.selectbox("Busque Cliente (Vendas):", ["Selecione..."] + opcoes_ataque, key="sel_ataque")
 
     if selecionado and selecionado != "Selecione...":
         cliente = df_view[df_view['label_select'] == selecionado].iloc[0]
@@ -465,10 +449,9 @@ with tab_ataque:
         tel_raw = str(cliente['telefone_1'])
         email_cliente = str(cliente['email_1']).strip()
         obs_cliente = str(cliente['obs']).strip()
-        status_cli = cliente['status_venda']
         tel_clean = limpar_telefone(tel_raw)
         
-        # SCRIPT DE VENDAS (Original)
+        # Script Vendas
         if dias != "Muitos" and dias > 30:
             script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada agora em Janeiro."
         elif "Novo" in cliente['status_venda']:
@@ -479,189 +462,162 @@ with tab_ataque:
         sugestoes_skus, motivo_sugestao = gerar_sugestoes_janeiro(area_cli, df_produtos)
         html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
 
-        with col_detalhe:
-            html_card = textwrap.dedent(f"""
-<div class="foco-card">
-<div style="display:flex; justify-content:space-between; align-items:center;">
-<h2 style='margin:0; color: #FFF; font-size: 24px;'>🏢 {cliente['razao_social']}</h2>
-<span style='background:#333; padding:4px 8px; border-radius:4px; font-size:12px; color:#aaa;'>ID: {cliente['pj_id']}</span>
-</div>
-<div class="foco-grid">
-<div class="foco-item"><b>📍 Área / Segmento</b>{cliente['area_atuacao_nome']}</div>
-<div class="foco-item"><b>📋 CNPJ</b>{cliente['cnpj']}</div>
-<div class="foco-item"><b>📞 Telefone</b>{tel_raw}</div>
-<div class="foco-item"><b>📧 E-mail</b>{email_cliente}</div>
-<div class="foco-item"><b>📅 Última Compra</b>{cliente['Ultima_Compra']} <span style="color:#ff6b6b; font-size:12px;">({dias} dias)</span></div>
-<div class="foco-item"><b>📊 Status Atual</b>{status_cli}</div>
-</div>
-<div class="sugestao-box">
-<div class="sugestao-title">🎯 Oportunidade de Janeiro ({area_cli})</div>
-<div style="margin-bottom:10px; font-size:14px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
-{html_sugestoes}
-</div>
-<div class="foco-obs">
-<b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Observação Salva:</b>
-{obs_cliente if obs_cliente else "Nenhuma observação registrada."}
-</div>
-<div class="script-box">
-<b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Sugerido (Vendas):</b>
-"{script_msg}"
-</div>
-</div>
-""")
-            st.markdown(html_card, unsafe_allow_html=True)
-            
-            b1, b2 = st.columns(2)
-            with b1:
-                if tel_clean and len(tel_clean) >= 10:
-                    link_wpp = f"https://wa.me/55{tel_clean}?text={script_msg.replace(' ', '%20')}"
-                    st.link_button(f"💬 Abrir WhatsApp ({tel_raw})", link_wpp, type="primary", use_container_width=True)
-                else:
-                    st.warning(f"Telefone inválido")
-            
-            with b2:
-                if email_cliente and email_cliente.lower() != "nan" and "@" in email_cliente:
-                    params = {"view": "cm", "fs": "1", "to": email_cliente, "su": f"Oportunidade Janeiro - {cliente['razao_social']}", "body": script_msg}
-                    link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
-                    st.link_button(f"📧 Abrir Gmail ({email_cliente})", link_gmail, use_container_width=True)
-                else:
-                    st.warning("E-mail não cadastrado")
+        html_card = textwrap.dedent(f"""
+        <div class="foco-card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente['razao_social'][:25]}...</h2>
+                <span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cliente['pj_id']}</span>
+            </div>
+            <div class="foco-grid">
+                <div class="foco-item"><b>📍 Área</b>{cliente['area_atuacao_nome']}</div>
+                <div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
+                <div class="foco-item"><b>📧 Email</b>{email_cliente[:25]}...</div>
+                <div class="foco-item"><b>📅 Compra</b>{cliente['Ultima_Compra']}</div>
+            </div>
+            <div class="sugestao-box">
+                <div class="sugestao-title">🎯 Sugestão ({area_cli})</div>
+                <div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
+                {html_sugestoes}
+            </div>
+            <div class="script-box">
+                <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Vendas:</b>
+                "{script_msg}"
+            </div>
+        </div>
+        """)
+        st.markdown(html_card, unsafe_allow_html=True)
+        
+        b1, b2 = st.columns(2)
+        with b1:
+            if tel_clean and len(tel_clean) >= 10:
+                link_wpp = f"https://wa.me/55{tel_clean}?text={script_msg.replace(' ', '%20')}"
+                st.link_button(f"💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
+        with b2:
+            if email_cliente and "@" in email_cliente:
+                params = {"view": "cm", "fs": "1", "to": email_cliente, "su": f"Elo - {cliente['razao_social']}", "body": script_msg}
+                link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
+                st.link_button(f"📧 Gmail", link_gmail, use_container_width=True)
 
-# === ABA 2: MODO ATUALIZAÇÃO (DADOS FALTANTES) ===
-with tab_update:
-    st.markdown("### 📝 Pendências de Cadastro (Sem Telefone ou E-mail)")
+# --- COLUNA DA DIREITA: MODO ATUALIZAÇÃO ---
+with col_right:
+    st.subheader("📝 Modo Atualização (Pendentes)")
     
     if df_needs_update.empty:
-        st.success("🎉 Nenhum cliente com dados pendentes na seleção atual!")
+        st.success("✅ Nenhum cadastro pendente!")
     else:
-        col_sel_up, col_detalhe_up = st.columns([1, 2])
-        
-        with col_sel_up:
-            df_needs_update['label_select'] = df_needs_update['razao_social'] + " (Pendentes)"
-            opcoes_update = sorted(list(set(df_needs_update['label_select'].tolist())))
-            selecionado_up = st.selectbox("Selecione para Atualizar:", ["Selecione..."] + opcoes_update, key="sel_update")
+        df_needs_update['label_select'] = df_needs_update['razao_social'] + " (Pendentes)"
+        opcoes_update = sorted(list(set(df_needs_update['label_select'].tolist())))
+        selecionado_up = st.selectbox("Selecione para Atualizar:", ["Selecione..."] + opcoes_update, key="sel_update")
 
         if selecionado_up and selecionado_up != "Selecione...":
             cliente_up = df_needs_update[df_needs_update['label_select'] == selecionado_up].iloc[0]
             
-            # Dados para exibição
-            dias = cliente_up['dias_sem_compra'] if cliente_up['dias_sem_compra'] < 9000 else "Muitos"
             tel_raw = str(cliente_up['telefone_1'])
             email_cliente = str(cliente_up['email_1']).strip()
             obs_cliente = str(cliente_up['obs']).strip()
-            
             falta_tel = cliente_up['falta_telefone']
             falta_email = cliente_up['falta_email']
             
-            # Cores de alerta
             cor_tel = "color: #FFD700 !important; font-weight: bold;" if falta_tel else ""
             cor_email = "color: #FFD700 !important; font-weight: bold;" if falta_email else ""
             
-            # SCRIPT DE ATUALIZAÇÃO
-            script_msg_up = "Olá! Tudo bem? Sou da Elo. Estamos entrando em contato para atualizar os cadastros da sua empresa e gostaríamos de saber se você precisa de algo para Janeiro?"
+            script_msg_up = "Olá! Estamos atualizando os cadastros da sua empresa, precisa de algo para Janeiro?"
 
-            with col_detalhe_up:
-                html_card_up = textwrap.dedent(f"""
-<div class="foco-card" style="border-left: 6px solid #FFD700;">
-<div style="display:flex; justify-content:space-between; align-items:center;">
-<h2 style='margin:0; color: #FFF; font-size: 24px;'>🏢 {cliente_up['razao_social']}</h2>
-<span style='background:#555; padding:4px 8px; border-radius:4px; font-size:12px; color:#fff;'>ATUALIZAÇÃO</span>
-</div>
-<div class="foco-grid">
-<div class="foco-item"><b>📍 Área / Segmento</b>{cliente_up['area_atuacao_nome']}</div>
-<div class="foco-item"><b>📋 CNPJ</b>{cliente_up['cnpj']}</div>
-<div class="foco-item" style="{cor_tel}"><b>📞 Telefone</b>{tel_raw if not falta_tel else "⚠️ PENDENTE"}</div>
-<div class="foco-item" style="{cor_email}"><b>📧 E-mail</b>{email_cliente if not falta_email else "⚠️ PENDENTE"}</div>
-<div class="foco-item"><b>📅 Última Compra</b>{cliente_up['Ultima_Compra']}</div>
-<div class="foco-item"><b>📊 Status Atual</b>{cliente_up['status_venda']}</div>
-</div>
-<div class="foco-obs">
-<b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Observação Salva:</b>
-{obs_cliente if obs_cliente else "Nenhuma observação registrada."}
-</div>
-<div class="script-box" style="border-left: 4px solid #FFD700;">
-<b style="color:#FFD700; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Sugerido (Atualização):</b>
-"{script_msg_up}"
-</div>
-</div>
-""")
-                st.markdown(html_card_up, unsafe_allow_html=True)
-                
-                # Ações (Se tiver pelo menos um meio de contato)
-                b1_up, b2_up = st.columns(2)
-                tel_clean_up = cliente_up['tel_clean']
-                
-                with b1_up:
-                    if tel_clean_up and len(tel_clean_up) >= 10:
-                        link_wpp = f"https://wa.me/55{tel_clean_up}?text={script_msg_up.replace(' ', '%20')}"
-                        st.link_button(f"💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
-                
-                with b2_up:
-                    if not falta_email:
-                        params = {"view": "cm", "fs": "1", "to": email_cliente, "su": f"Atualização Cadastral - {cliente_up['razao_social']}", "body": script_msg_up}
-                        link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
-                        st.link_button(f"📧 Gmail", link_gmail, use_container_width=True)
-                
-                if falta_tel and falta_email:
-                    st.error("🚨 Cliente sem Telefone E sem E-mail. Necessário buscar contato no Google/Site.")
+            html_card_up = textwrap.dedent(f"""
+            <div class="foco-card" style="border-left: 6px solid #FFD700;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente_up['razao_social'][:25]}...</h2>
+                    <span style='background:#555; padding:2px 6px; border-radius:4px; font-size:11px; color:#fff;'>ATUALIZAR</span>
+                </div>
+                <div class="foco-grid">
+                    <div class="foco-item"><b>📍 Área</b>{cliente_up['area_atuacao_nome']}</div>
+                    <div class="foco-item"><b>📋 CNPJ</b>{cliente_up['cnpj']}</div>
+                    <div class="foco-item" style="{cor_tel}"><b>📞 Tel</b>{tel_raw if not falta_tel else "⚠️ PENDENTE"}</div>
+                    <div class="foco-item" style="{cor_email}"><b>📧 Email</b>{email_cliente if not falta_email else "⚠️ PENDENTE"}</div>
+                </div>
+                <div class="foco-obs">
+                    <b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Obs:</b>
+                    {obs_cliente if obs_cliente else "Nenhuma."}
+                </div>
+                <div class="script-box" style="border-left: 4px solid #FFD700;">
+                    <b style="color:#FFD700; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Atualização:</b>
+                    "{script_msg_up}"
+                </div>
+            </div>
+            """)
+            st.markdown(html_card_up, unsafe_allow_html=True)
+            
+            b1_up, b2_up = st.columns(2)
+            tel_clean_up = cliente_up['tel_clean']
+            with b1_up:
+                if tel_clean_up and len(tel_clean_up) >= 10:
+                    link_wpp = f"https://wa.me/55{tel_clean_up}?text={script_msg_up.replace(' ', '%20')}"
+                    st.link_button(f"💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
+            with b2_up:
+                if not falta_email:
+                    params = {"view": "cm", "fs": "1", "to": email_cliente, "su": f"Atualização - {cliente_up['razao_social']}", "body": script_msg_up}
+                    link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
+                    st.link_button(f"📧 Gmail", link_gmail, use_container_width=True)
 
-# === ABA 3: LISTA GERAL (TABELA) ===
-with tab_lista:
-    st.markdown("### 📋 Tabela Geral de Clientes")
+# =========================================================
+#  PARTE INFERIOR: LISTA GERAL (SEMPRE VISÍVEL)
+# =========================================================
+st.divider()
+st.subheader("📋 Lista Geral de Clientes")
+
+col_config = {
+    "pj_id": st.column_config.TextColumn("ID", disabled=True),
+    "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
+    "cnpj": st.column_config.TextColumn("CNPJ", disabled=True),
+    "area_atuacao_nome": st.column_config.TextColumn("Área", disabled=True),
+    "email_1": st.column_config.TextColumn("E-mail", disabled=True),
+    "Ultima_Compra": st.column_config.TextColumn("Última Compra", disabled=True),
+    "dias_sem_compra": st.column_config.NumberColumn("Dias Inativo", format="%d dias"),
+    "telefone_1": st.column_config.TextColumn("Telefone", disabled=True),
+    "status_venda": st.column_config.SelectboxColumn(
+        "Status", 
+        options=['Não contatado', 'Tentando Contato', 'Em Negociação', 'Fechado', 'Perdido', 'Novo'], 
+        required=True
+    ),
+    "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
+    "obs": st.column_config.TextColumn("Obs", width="large"),
     
-    col_config = {
-        "pj_id": st.column_config.TextColumn("ID", disabled=True),
-        "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
-        "cnpj": st.column_config.TextColumn("CNPJ", disabled=True),
-        "area_atuacao_nome": st.column_config.TextColumn("Área", disabled=True),
-        "email_1": st.column_config.TextColumn("E-mail", disabled=True),
-        "Ultima_Compra": st.column_config.TextColumn("Última Compra", disabled=True),
-        "dias_sem_compra": st.column_config.NumberColumn("Dias Inativo", format="%d dias"),
-        "telefone_1": st.column_config.TextColumn("Telefone", disabled=True),
-        "status_venda": st.column_config.SelectboxColumn(
-            "Status", 
-            options=['Não contatado', 'Tentando Contato', 'Em Negociação', 'Fechado', 'Perdido', 'Novo'], 
-            required=True
-        ),
-        "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
-        "obs": st.column_config.TextColumn("Obs", width="large"),
-        
-        # DATAS E GAPS
-        "data_tentativa_1": st.column_config.DateColumn("Tentativa 1", format="DD/MM/YYYY"),
-        "data_tentativa_2": st.column_config.DateColumn("Tentativa 2", format="DD/MM/YYYY"),
-        "data_tentativa_3": st.column_config.DateColumn("Tentativa 3", format="DD/MM/YYYY"),
-        "gap_1_2": st.column_config.TextColumn("Intervalo 1-2 (Dias)", help="Digite manualmente"),
-        "gap_2_3": st.column_config.TextColumn("Intervalo 2-3 (Dias)", help="Digite manualmente")
-    }
+    # DATAS E GAPS
+    "data_tentativa_1": st.column_config.DateColumn("Tentativa 1", format="DD/MM/YYYY"),
+    "data_tentativa_2": st.column_config.DateColumn("Tentativa 2", format="DD/MM/YYYY"),
+    "data_tentativa_3": st.column_config.DateColumn("Tentativa 3", format="DD/MM/YYYY"),
+    "gap_1_2": st.column_config.TextColumn("Gap 1-2", help="Digite manualmente"),
+    "gap_2_3": st.column_config.TextColumn("Gap 2-3", help="Digite manualmente")
+}
 
-    cols_display = [
-        'pj_id', 'razao_social', 'cnpj', 'status_venda', 
-        'data_tentativa_1', 'gap_1_2', 
-        'data_tentativa_2', 'gap_2_3', 
-        'data_tentativa_3',
-        'obs', 'telefone_1', 'Ultima_Compra', 'email_1', 'area_atuacao_nome'
-    ]
+cols_display = [
+    'pj_id', 'razao_social', 'cnpj', 'status_venda', 
+    'data_tentativa_1', 'gap_1_2', 
+    'data_tentativa_2', 'gap_2_3', 
+    'data_tentativa_3',
+    'obs', 'telefone_1', 'Ultima_Compra', 'email_1', 'area_atuacao_nome'
+]
 
-    df_edit = st.data_editor(
-        df_view[cols_display], 
-        column_config=col_config, 
-        hide_index=True, 
-        use_container_width=True, 
-        key="editor_crm", 
-        height=600
-    )
+df_edit = st.data_editor(
+    df_view[cols_display], 
+    column_config=col_config, 
+    hide_index=True, 
+    use_container_width=True, 
+    key="editor_crm", 
+    height=500
+)
 
-    # --- RODAPÉ (DENTRO DA ABA OU GLOBAL - OPTEI POR DENTRO DA ABA LISTA PARA LIMPEZA) ---
-    c_save, c_export = st.columns([1, 1])
+# --- RODAPÉ DE AÇÃO ---
+c_save, c_export = st.columns([1, 1])
 
-    with c_save:
-        if st.button("💾 Salvar Alterações", type="primary"):
-            salvar_alteracoes(df_edit, df_crm)
-            st.toast("Dados Salvos!", icon="✅")
-            import time
-            time.sleep(1)
-            st.rerun()
+with c_save:
+    if st.button("💾 Salvar Alterações Tabela", type="primary"):
+        salvar_alteracoes(df_edit, df_crm)
+        st.toast("Dados Salvos!", icon="✅")
+        import time
+        time.sleep(1)
+        st.rerun()
 
-    with c_export:
-        excel_data = converter_para_excel(df_edit)
-        st.download_button("📥 Baixar Planilha", data=excel_data, file_name="EloFlow_Full.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+with c_export:
+    excel_data = converter_para_excel(df_edit)
+    st.download_button("📥 Baixar Tabela Completa", data=excel_data, file_name="EloFlow_Full.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
