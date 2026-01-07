@@ -599,7 +599,7 @@ with col_right:
             subject_up = f"Atualização Cadastral - {cliente_up['razao_social']}"
             body_up = f"""Bom dia, tudo bem?
 
-Nós somos fornecedores especializados em brindes corporativos há 30 anos (Elo).
+Nós somos fornecedores especializados em brindes corporativos há 30 anos no mercado!.
 
 Eu precisava falar com o responsável pelo Marketing ou Compras para atualizar um cadastro de fornecedor e apresentar nosso portfólio 2026.
 
