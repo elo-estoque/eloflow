@@ -486,17 +486,21 @@ with col_left:
         
         # 1. RECUPERAÇÃO (Inativos ou muito tempo sem compra)
         if "Inativo" in str(cliente.get('Categoria_Cliente', '')) or dias > 180:
+            
+            # TRATAMENTO DO "(desde -)" - Se for traço, fica vazio
+            data_ult_compra = cliente['Ultima_Compra']
+            trecho_desde = f" (desde {data_ult_compra})" if data_ult_compra != '-' else ""
+            
             subject_mail = f"{cliente['razao_social']}, novidades na Elo desde nosso último contato"
             body_mail = f"""Olá, tudo bem?
 
-Estava revisando nossa carteira aqui na Elo e vi que faz um tempo que não falamos (desde {cliente['Ultima_Compra']}).
+Estava revisando nossa carteira aqui na Elo e vi que faz um tempo que não falamos{trecho_desde}.
 
 Muita coisa mudou por aqui! Renovamos nosso portfólio com itens que estão em alta agora, como a Linha Térmica (Estilo Stanley) e opções Eco-Sustentáveis que muitas empresas do setor de {area_cli} estão pedindo.
 
 Gostaria de te enviar nosso catálogo atualizado de 2026 sem compromisso. Pode ser por aqui mesmo?
 
-Atenciosamente,
-Equipe Elo"""
+Atenciosamente,"""
             
             # Script WPP Curto para a tela
             script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada agora em Janeiro."
@@ -506,14 +510,13 @@ Equipe Elo"""
             subject_mail = f"Ideia para a {cliente['razao_social']}: Kits de Boas-vindas"
             body_mail = f"""Oi, tudo bom?
 
-Vi que o último pedido de {cliente['Ultima_Compra']} foi entregue.
+Vi que o último pedido aqui com a Elo foi em {cliente['Ultima_Compra']}.
 
 Queria te dar uma ideia: muitas empresas que compram material de escritório conosco estão montando Kits de Boas-vindas completos (Mochila + Caderno + Garrafa). Isso aumenta muito o engajamento do colaborador novo.
 
-Topa ver um modelo virtual com a logo da {cliente['razao_social']} só para ver como ficaria?
+Topa montar um Kit Onboarding conosco sem compromisso?
 
-Atenciosamente,
-Equipe Elo"""
+Atenciosamente,"""
             
             # Script WPP Curto para a tela
             if "Novo" in cliente['status_venda']:
@@ -596,14 +599,13 @@ with col_right:
             subject_up = f"Atualização Cadastral - {cliente_up['razao_social']}"
             body_up = f"""Bom dia, tudo bem?
 
-Nós somos fornecedores especializados em brindes corporativos (Elo).
+Nós somos fornecedores especializados em brindes corporativos há 30 anos (Elo).
 
 Eu precisava falar com o responsável pelo Marketing ou Compras para atualizar um cadastro de fornecedor e apresentar nosso portfólio 2026.
 
 Você saberia me dizer se é com você mesmo ou outra pessoa que cuida disso hoje?
 
-Obrigado,
-Equipe Elo"""
+Obrigado,"""
 
             html_card_up = f"""
 <div class="foco-card" style="border-left: 6px solid #FFD700;">
