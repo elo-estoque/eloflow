@@ -12,6 +12,19 @@ import time
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Elo Flow - Prospecção", layout="wide", page_icon="🦅")
 
+# =========================================================
+#  CORREÇÃO DO ERRO: LÓGICA DE PONTE (STATE BRIDGE)
+#  Isso precisa ficar antes de qualquer widget ser desenhado
+# =========================================================
+if 'pending_client_select' in st.session_state:
+    st.session_state['sel_ataque'] = st.session_state['pending_client_select']
+    del st.session_state['pending_client_select']
+
+if 'pending_update_select' in st.session_state:
+    st.session_state['sel_update'] = st.session_state['pending_update_select']
+    del st.session_state['pending_update_select']
+# =========================================================
+
 # --- CSS VISUAL ---
 st.markdown("""
 <style>
@@ -734,16 +747,16 @@ if not rows_abrir.empty:
     lbl_ataque = target_row['razao_social'] + " (" + target_row['Ultima_Compra'] + ")"
     lbl_update = target_row['razao_social'] + " (Pendentes)"
     
-    # Atualiza Session State para mudar os Cards
-    st.session_state['sel_ataque'] = lbl_ataque
+    # ATUALIZA A VARIAVEL DE PONTE (não atualiza o widget direto para evitar erro)
+    st.session_state['pending_client_select'] = lbl_ataque
     
     # Verifica se esse cliente está na lista de update para não dar erro
     if lbl_update in opcoes_update if 'opcoes_update' in locals() else []:
-        st.session_state['sel_update'] = lbl_update
+        st.session_state['pending_update_select'] = lbl_update
         
     st.toast(f"Abrindo ficha: {target_row['razao_social']}...", icon="📂")
     
-    # Pequeno delay e rerun para limpar o checkbox visualmente e subir a tela
+    # Rerun para que o topo do script leia a variavel de ponte e atualize o widget
     time.sleep(0.3)
     st.rerun()
 
