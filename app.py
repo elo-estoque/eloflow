@@ -127,13 +127,20 @@ PRODUTOS_FILE = os.path.join(DATA_DIR, "mais_pedidos.csv")
 # --- FUNÇÕES AUXILIARES ---
 
 def carregar_crm_db():
-    # ADICIONADO: email_1 e telefone_1 para salvar edições
+    # CORREÇÃO: Forçar leitura como STRING para evitar erro de float vs text
     cols_padrao = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 'data_interacao', 
                    'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
                    'gap_1_2', 'gap_2_3', 'email_1', 'telefone_1']
     
     if os.path.exists(DB_FILE):
-        df = pd.read_csv(DB_FILE, dtype={'pj_id': str, 'email_1': str, 'telefone_1': str})
+        # dtype=str garante que gaps e telefones sejam lidos como texto
+        df = pd.read_csv(DB_FILE, dtype={
+            'pj_id': str, 
+            'email_1': str, 
+            'telefone_1': str,
+            'gap_1_2': str,
+            'gap_2_3': str
+        })
         for col in cols_padrao:
             if col not in df.columns:
                 df[col] = None
@@ -142,7 +149,6 @@ def carregar_crm_db():
         return pd.DataFrame(columns=cols_padrao)
 
 def salvar_alteracoes(df_editor, df_original_crm):
-    # ADICIONADO: email_1 e telefone_1 na lista de salvamento
     cols_salvar = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 
                    'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
                    'gap_1_2', 'gap_2_3', 'email_1', 'telefone_1']
@@ -155,6 +161,7 @@ def salvar_alteracoes(df_editor, df_original_crm):
     novos_dados = df_editor[cols_salvar].copy()
     novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    # Garante datas em formato string
     for col in ['data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']:
         novos_dados[col] = pd.to_datetime(novos_dados[col], errors='coerce').dt.strftime('%Y-%m-%d')
 
@@ -235,7 +242,7 @@ def carregar_produtos_sugestao(path_or_file):
         # Normalizar colunas para maiusculo para facilitar busca
         df.columns = [c.upper().strip() for c in df.columns]
         
-        # Identificar colunas chaves (Adaptar conforme seu CSV)
+        # Identificar colunas chaves
         col_desc = next((c for c in df.columns if 'DESC' in c or 'NOME' in c or 'PRODUTO' in c), None)
         col_id = next((c for c in df.columns if 'COD' in c or 'SKU' in c), None)
         
@@ -246,7 +253,6 @@ def carregar_produtos_sugestao(path_or_file):
         
         # Garante que tem a coluna nome, se não tiver cria uma dummy
         if 'PRODUTO_NOME' not in df.columns:
-             # Tenta pegar a primeira coluna de texto
              df['PRODUTO_NOME'] = df.iloc[:, 0].astype(str)
 
         return df
@@ -287,21 +293,20 @@ def gerar_sugestoes_janeiro(area_atuacao, df_produtos):
             matched_key = key
             break
     
-    # Se não achou regra específica, usa regra geral de Janeiro (Verão/Volta aulas)
+    # Se não achou regra específica, usa regra geral de Janeiro
     if not keywords:
         keywords = ['PAPEL', 'VERAO', 'VENTILADOR', 'AGUA', 'ORGANIZADOR', 'OFERTA']
         matched_key = "Geral (Janeiro)"
 
     # Filtra o DataFrame de Produtos
     mask = df_produtos['PRODUTO_NOME'].astype(str).str.upper().apply(lambda x: any(k in x for k in keywords))
-    df_sugestao = df_produtos[mask].head(6) # Pega os top 6 dessa categoria
+    df_sugestao = df_produtos[mask].head(6) 
     
     lista_skus = []
     if not df_sugestao.empty:
         for _, row in df_sugestao.iterrows():
             nome = row['PRODUTO_NOME']
             sku = row.get('SKU', '-')
-            # Tenta formatar bonito se tiver SKU
             if str(sku) != '-' and str(sku) != 'nan':
                  lista_skus.append(f"📦 <b>{sku}</b> - {nome}")
             else:
@@ -388,21 +393,21 @@ df_crm = carregar_crm_db()
 if 'email_1' in df_crm.columns: df_crm['email_1'] = df_crm['email_1'].astype(str).replace('nan', '')
 if 'telefone_1' in df_crm.columns: df_crm['telefone_1'] = df_crm['telefone_1'].astype(str).replace('nan', '')
 
-# Merge com sufixos para diferenciar dados originais (Planilha) dos salvos (CRM)
+# Merge com sufixos
 df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left', suffixes=('', '_crm'))
 
-# LÓGICA DE PRIORIDADE: Se existir dado no CRM (editado), ele sobrescreve o da planilha
+# LÓGICA DE PRIORIDADE: CRM (editado) sobrescreve Planilha
 if 'email_1_crm' in df_full.columns:
     df_full['email_1'] = df_full['email_1_crm'].combine_first(df_full['email_1'])
 
 if 'telefone_1_crm' in df_full.columns:
     df_full['telefone_1'] = df_full['telefone_1_crm'].combine_first(df_full['telefone_1'])
 
-# Remove colunas auxiliares do merge
+# Remove colunas auxiliares
 cols_to_drop = [c for c in df_full.columns if c.endswith('_crm')]
 df_full.drop(columns=cols_to_drop, inplace=True)
 
-# Preenche vazios básicos
+# Preenche vazios
 df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
 df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
 df_full['obs'] = df_full['obs'].fillna('')
@@ -486,7 +491,6 @@ with col_left:
         sugestoes_skus, motivo_sugestao = gerar_sugestoes_janeiro(area_cli, df_produtos)
         html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
 
-        # ATENÇÃO: HTML ALINHADO À ESQUERDA PARA EVITAR BUG DE INDENTAÇÃO
         html_card = f"""
 <div class="foco-card">
 <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -548,7 +552,6 @@ with col_right:
             
             script_msg_up = "Olá! Estamos atualizando os cadastros da sua empresa, precisa de algo para Janeiro?"
 
-            # ATENÇÃO: HTML ALINHADO À ESQUERDA PARA EVITAR BUG DE INDENTAÇÃO
             html_card_up = f"""
 <div class="foco-card" style="border-left: 6px solid #FFD700;">
 <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -596,7 +599,6 @@ col_config = {
     "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
     "cnpj": st.column_config.TextColumn("CNPJ", disabled=True),
     "area_atuacao_nome": st.column_config.TextColumn("Área", disabled=True),
-    # EDITA E-MAIL E TELEFONE AGORA
     "email_1": st.column_config.TextColumn("E-mail", disabled=False),
     "telefone_1": st.column_config.TextColumn("Telefone", disabled=False),
     "Ultima_Compra": st.column_config.TextColumn("Última Compra", disabled=True),
@@ -609,7 +611,7 @@ col_config = {
     "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
     "obs": st.column_config.TextColumn("Obs", width="large"),
     
-    # DATAS E GAPS
+    # DATAS E GAPS - Configurados como texto
     "data_tentativa_1": st.column_config.DateColumn("Tentativa 1", format="DD/MM/YYYY"),
     "data_tentativa_2": st.column_config.DateColumn("Tentativa 2", format="DD/MM/YYYY"),
     "data_tentativa_3": st.column_config.DateColumn("Tentativa 3", format="DD/MM/YYYY"),
@@ -624,6 +626,14 @@ cols_display = [
     'data_tentativa_3',
     'obs', 'telefone_1', 'Ultima_Compra', 'email_1', 'area_atuacao_nome'
 ]
+
+# CORREÇÃO CRÍTICA: Força colunas de texto para serem string antes do editor
+# Isso evita o erro: "Text column is not compatible with float/number"
+cols_text_force = ['gap_1_2', 'gap_2_3', 'telefone_1', 'email_1']
+for col in cols_text_force:
+    if col in df_view.columns:
+        df_view[col] = df_view[col].astype(str).replace('nan', '')
+        df_view[col] = df_view[col].replace('None', '')
 
 df_edit = st.data_editor(
     df_view[cols_display], 
