@@ -7,6 +7,7 @@ import os
 import io
 import urllib.parse
 import textwrap
+import time
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Elo Flow - Prospecção", layout="wide", page_icon="🦅")
@@ -176,6 +177,9 @@ def salvar_alteracoes(df_editor, df_original_crm):
 def converter_para_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # Remover coluna de controle interno antes de exportar
+        if 'ABRIR' in df.columns:
+            df = df.drop(columns=['ABRIR'])
         df.to_excel(writer, index=False, sheet_name='EloFlow_Dados')
     return output.getvalue()
 
@@ -468,31 +472,34 @@ with col_left:
     
     df_view['label_select'] = df_view['razao_social'] + " (" + df_view['Ultima_Compra'] + ")"
     opcoes_ataque = sorted(list(set(df_view['label_select'].tolist())))
+    
+    # Selectbox conectado ao session_state para receber trigger da tabela
     selecionado = st.selectbox("Busque Cliente (Vendas):", ["Selecione..."] + opcoes_ataque, key="sel_ataque")
 
     if selecionado and selecionado != "Selecione...":
-        cliente = df_view[df_view['label_select'] == selecionado].iloc[0]
-        
-        dias = cliente['dias_sem_compra'] if cliente['dias_sem_compra'] < 9000 else 9999
-        area_cli = str(cliente['area_atuacao_nome'])
-        tel_raw = str(cliente['telefone_1'])
-        email_cliente = str(cliente['email_1']).strip()
-        obs_cliente = str(cliente['obs']).strip()
-        tel_clean = limpar_telefone(tel_raw)
-        
-        # --- DEFINIÇÃO INTELIGENTE DO SCRIPT DE E-MAIL (ATAQUE) ---
-        subject_mail = ""
-        body_mail = ""
-        
-        # 1. RECUPERAÇÃO (Inativos ou muito tempo sem compra)
-        if "Inativo" in str(cliente.get('Categoria_Cliente', '')) or dias > 180:
+        try:
+            cliente = df_view[df_view['label_select'] == selecionado].iloc[0]
             
-            # TRATAMENTO DO "(desde -)" - Se for traço, fica vazio
-            data_ult_compra = cliente['Ultima_Compra']
-            trecho_desde = f" (desde {data_ult_compra})" if data_ult_compra != '-' else ""
+            dias = cliente['dias_sem_compra'] if cliente['dias_sem_compra'] < 9000 else 9999
+            area_cli = str(cliente['area_atuacao_nome'])
+            tel_raw = str(cliente['telefone_1'])
+            email_cliente = str(cliente['email_1']).strip()
+            obs_cliente = str(cliente['obs']).strip()
+            tel_clean = limpar_telefone(tel_raw)
             
-            subject_mail = f"{cliente['razao_social']}, novidades na Elo desde nosso último contato"
-            body_mail = f"""Olá, tudo bem?
+            # --- DEFINIÇÃO INTELIGENTE DO SCRIPT DE E-MAIL (ATAQUE) ---
+            subject_mail = ""
+            body_mail = ""
+            
+            # 1. RECUPERAÇÃO (Inativos ou muito tempo sem compra)
+            if "Inativo" in str(cliente.get('Categoria_Cliente', '')) or dias > 180:
+                
+                # TRATAMENTO DO "(desde -)" - Se for traço, fica vazio
+                data_ult_compra = cliente['Ultima_Compra']
+                trecho_desde = f" (desde {data_ult_compra})" if data_ult_compra != '-' else ""
+                
+                subject_mail = f"{cliente['razao_social']}, novidades na Elo desde nosso último contato"
+                body_mail = f"""Olá, tudo bem?
 
 Estava revisando nossa carteira aqui na Elo e vi que faz um tempo que não falamos{trecho_desde}.
 
@@ -501,14 +508,14 @@ Muita coisa mudou por aqui! Renovamos nosso portfólio com itens que estão em a
 Gostaria de te enviar nosso catálogo atualizado de 2026 sem compromisso. Pode ser por aqui mesmo?
 
 Atenciosamente,"""
-            
-            # Script WPP Curto para a tela
-            script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada agora em Janeiro."
+                
+                # Script WPP Curto para a tela
+                script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada agora em Janeiro."
 
-        # 2. MANUTENÇÃO / CROSS-SELL (Ativos ou Recentes)
-        else:
-            subject_mail = f"Ideia para a {cliente['razao_social']}: Kits de Boas-vindas"
-            body_mail = f"""Oi, tudo bom?
+            # 2. MANUTENÇÃO / CROSS-SELL (Ativos ou Recentes)
+            else:
+                subject_mail = f"Ideia para a {cliente['razao_social']}: Kits de Boas-vindas"
+                body_mail = f"""Oi, tudo bom?
 
 Vi que o último pedido aqui com a Elo foi em {cliente['Ultima_Compra']}.
 
@@ -517,58 +524,60 @@ Queria te dar uma ideia: muitas empresas que compram material de escritório con
 Topa montar um Kit Onboarding conosco sem compromisso?
 
 Atenciosamente,"""
+                
+                # Script WPP Curto para a tela
+                if "Novo" in cliente['status_venda']:
+                    script_msg = f"Olá! Vi que vocês atuam com {area_cli} e gostaria de apresentar a Elo."
+                else:
+                    script_msg = f"Olá! Gostaria de falar sobre oportunidades de Janeiro para a área de {area_cli}."
+
+            sugestoes_skus, motivo_sugestao = gerar_sugestoes_janeiro(area_cli, df_produtos)
+            html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
+
+            html_card = f"""
+    <div class="foco-card">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+    <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente['razao_social'][:25]}...</h2>
+    <span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cliente['pj_id']}</span>
+    </div>
+    <div class="foco-grid">
+    <div class="foco-item"><b>📍 Área</b>{cliente['area_atuacao_nome']}</div>
+    <div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
+    <div class="foco-item"><b>📧 Email</b>{email_cliente[:25]}...</div>
+    <div class="foco-item"><b>📅 Compra</b>{cliente['Ultima_Compra']}</div>
+    </div>
+    <div class="sugestao-box">
+    <div class="sugestao-title">🎯 Sugestão ({area_cli})</div>
+    <div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
+    {html_sugestoes}
+    </div>
+    <div class="script-box">
+    <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Vendas (WPP):</b>
+    "{script_msg}"
+    </div>
+    </div>
+    """
+            st.markdown(html_card, unsafe_allow_html=True)
             
-            # Script WPP Curto para a tela
-            if "Novo" in cliente['status_venda']:
-                script_msg = f"Olá! Vi que vocês atuam com {area_cli} e gostaria de apresentar a Elo."
-            else:
-                script_msg = f"Olá! Gostaria de falar sobre oportunidades de Janeiro para a área de {area_cli}."
-
-        sugestoes_skus, motivo_sugestao = gerar_sugestoes_janeiro(area_cli, df_produtos)
-        html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
-
-        html_card = f"""
-<div class="foco-card">
-<div style="display:flex; justify-content:space-between; align-items:center;">
-<h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente['razao_social'][:25]}...</h2>
-<span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cliente['pj_id']}</span>
-</div>
-<div class="foco-grid">
-<div class="foco-item"><b>📍 Área</b>{cliente['area_atuacao_nome']}</div>
-<div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
-<div class="foco-item"><b>📧 Email</b>{email_cliente[:25]}...</div>
-<div class="foco-item"><b>📅 Compra</b>{cliente['Ultima_Compra']}</div>
-</div>
-<div class="sugestao-box">
-<div class="sugestao-title">🎯 Sugestão ({area_cli})</div>
-<div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
-{html_sugestoes}
-</div>
-<div class="script-box">
-<b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Vendas (WPP):</b>
-"{script_msg}"
-</div>
-</div>
-"""
-        st.markdown(html_card, unsafe_allow_html=True)
-        
-        b1, b2 = st.columns(2)
-        with b1:
-            if tel_clean and len(tel_clean) >= 10:
-                link_wpp = f"https://wa.me/55{tel_clean}?text={script_msg.replace(' ', '%20')}"
-                st.link_button(f"💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
-        with b2:
-            if email_cliente and "@" in email_cliente:
-                # GERA O LINK DO GMAIL JÁ PREENCHIDO
-                params = {
-                    "view": "cm", 
-                    "fs": "1", 
-                    "to": email_cliente, 
-                    "su": subject_mail, 
-                    "body": body_mail
-                }
-                link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
-                st.link_button(f"📧 Gmail (Script Pronto)", link_gmail, use_container_width=True)
+            b1, b2 = st.columns(2)
+            with b1:
+                if tel_clean and len(tel_clean) >= 10:
+                    link_wpp = f"https://wa.me/55{tel_clean}?text={script_msg.replace(' ', '%20')}"
+                    st.link_button(f"💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
+            with b2:
+                if email_cliente and "@" in email_cliente:
+                    # GERA O LINK DO GMAIL JÁ PREENCHIDO
+                    params = {
+                        "view": "cm", 
+                        "fs": "1", 
+                        "to": email_cliente, 
+                        "su": subject_mail, 
+                        "body": body_mail
+                    }
+                    link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
+                    st.link_button(f"📧 Gmail (Script Pronto)", link_gmail, use_container_width=True)
+        except Exception as e:
+            st.warning("Selecione um cliente válido para ver os detalhes.")
 
 # --- COLUNA DA DIREITA: MODO ATUALIZAÇÃO ---
 with col_right:
@@ -582,73 +591,76 @@ with col_right:
         selecionado_up = st.selectbox("Selecione para Atualizar:", ["Selecione..."] + opcoes_update, key="sel_update")
 
         if selecionado_up and selecionado_up != "Selecione...":
-            cliente_up = df_needs_update[df_needs_update['label_select'] == selecionado_up].iloc[0]
-            
-            tel_raw = str(cliente_up['telefone_1'])
-            email_cliente = str(cliente_up['email_1']).strip()
-            obs_cliente = str(cliente_up['obs']).strip()
-            falta_tel = cliente_up['falta_telefone']
-            falta_email = cliente_up['falta_email']
-            
-            cor_tel = "color: #FFD700 !important; font-weight: bold;" if falta_tel else ""
-            cor_email = "color: #FFD700 !important; font-weight: bold;" if falta_email else ""
-            
-            script_msg_up = "Olá! Estamos atualizando os cadastros da sua empresa, precisa de algo para Janeiro?"
+            try:
+                cliente_up = df_needs_update[df_needs_update['label_select'] == selecionado_up].iloc[0]
+                
+                tel_raw = str(cliente_up['telefone_1'])
+                email_cliente = str(cliente_up['email_1']).strip()
+                obs_cliente = str(cliente_up['obs']).strip()
+                falta_tel = cliente_up['falta_telefone']
+                falta_email = cliente_up['falta_email']
+                
+                cor_tel = "color: #FFD700 !important; font-weight: bold;" if falta_tel else ""
+                cor_email = "color: #FFD700 !important; font-weight: bold;" if falta_email else ""
+                
+                script_msg_up = "Olá! Estamos atualizando os cadastros da sua empresa, precisa de algo para Janeiro?"
 
-            # --- SCRIPT DE E-MAIL PARA ATUALIZAÇÃO ---
-            subject_up = f"Atualização Cadastral - {cliente_up['razao_social']}"
-            body_up = f"""Bom dia, tudo bem?
+                # --- SCRIPT DE E-MAIL PARA ATUALIZAÇÃO ---
+                subject_up = f"Atualização Cadastral - {cliente_up['razao_social']}"
+                body_up = f"""Bom dia, tudo bem?
 
-Nós somos fornecedores especializados em brindes corporativos há 30 anos no mercado!.
+    Nós somos fornecedores especializados em brindes corporativos há 30 anos no mercado!.
 
-Eu precisava falar com o responsável pelo Marketing ou Compras para atualizar um cadastro de fornecedor e apresentar nosso portfólio 2026.
+    Eu precisava falar com o responsável pelo Marketing ou Compras para atualizar um cadastro de fornecedor e apresentar nosso portfólio 2026.
 
-Você saberia me dizer se é com você mesmo ou outra pessoa que cuida disso hoje?
+    Você saberia me dizer se é com você mesmo ou outra pessoa que cuida disso hoje?
 
-Obrigado,"""
+    Obrigado,"""
 
-            html_card_up = f"""
-<div class="foco-card" style="border-left: 6px solid #FFD700;">
-<div style="display:flex; justify-content:space-between; align-items:center;">
-<h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente_up['razao_social'][:25]}...</h2>
-<span style='background:#555; padding:2px 6px; border-radius:4px; font-size:11px; color:#fff;'>ATUALIZAR</span>
-</div>
-<div class="foco-grid">
-<div class="foco-item"><b>📍 Área</b>{cliente_up['area_atuacao_nome']}</div>
-<div class="foco-item"><b>📋 CNPJ</b>{cliente_up['cnpj']}</div>
-<div class="foco-item" style="{cor_tel}"><b>📞 Tel</b>{tel_raw if not falta_tel else "⚠️ PENDENTE"}</div>
-<div class="foco-item" style="{cor_email}"><b>📧 Email</b>{email_cliente if not falta_email else "⚠️ PENDENTE"}</div>
-</div>
-<div class="foco-obs">
-<b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Obs:</b>
-{obs_cliente if obs_cliente else "Nenhuma."}
-</div>
-<div class="script-box" style="border-left: 4px solid #FFD700;">
-<b style="color:#FFD700; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Atualização:</b>
-"{script_msg_up}"
-</div>
-</div>
-"""
-            st.markdown(html_card_up, unsafe_allow_html=True)
-            
-            b1_up, b2_up = st.columns(2)
-            tel_clean_up = cliente_up['tel_clean']
-            with b1_up:
-                if tel_clean_up and len(tel_clean_up) >= 10:
-                    link_wpp = f"https://wa.me/55{tel_clean_up}?text={script_msg_up.replace(' ', '%20')}"
-                    st.link_button(f"💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
-            with b2_up:
-                if not falta_email:
-                    # GERA LINK DO GMAIL DE ATUALIZAÇÃO
-                    params_up = {
-                        "view": "cm", 
-                        "fs": "1", 
-                        "to": email_cliente, 
-                        "su": subject_up, 
-                        "body": body_up
-                    }
-                    link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params_up)}"
-                    st.link_button(f"📧 Gmail (Script Atualização)", link_gmail, use_container_width=True)
+                html_card_up = f"""
+    <div class="foco-card" style="border-left: 6px solid #FFD700;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+    <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente_up['razao_social'][:25]}...</h2>
+    <span style='background:#555; padding:2px 6px; border-radius:4px; font-size:11px; color:#fff;'>ATUALIZAR</span>
+    </div>
+    <div class="foco-grid">
+    <div class="foco-item"><b>📍 Área</b>{cliente_up['area_atuacao_nome']}</div>
+    <div class="foco-item"><b>📋 CNPJ</b>{cliente_up['cnpj']}</div>
+    <div class="foco-item" style="{cor_tel}"><b>📞 Tel</b>{tel_raw if not falta_tel else "⚠️ PENDENTE"}</div>
+    <div class="foco-item" style="{cor_email}"><b>📧 Email</b>{email_cliente if not falta_email else "⚠️ PENDENTE"}</div>
+    </div>
+    <div class="foco-obs">
+    <b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Obs:</b>
+    {obs_cliente if obs_cliente else "Nenhuma."}
+    </div>
+    <div class="script-box" style="border-left: 4px solid #FFD700;">
+    <b style="color:#FFD700; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Atualização:</b>
+    "{script_msg_up}"
+    </div>
+    </div>
+    """
+                st.markdown(html_card_up, unsafe_allow_html=True)
+                
+                b1_up, b2_up = st.columns(2)
+                tel_clean_up = cliente_up['tel_clean']
+                with b1_up:
+                    if tel_clean_up and len(tel_clean_up) >= 10:
+                        link_wpp = f"https://wa.me/55{tel_clean_up}?text={script_msg_up.replace(' ', '%20')}"
+                        st.link_button(f"💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
+                with b2_up:
+                    if not falta_email:
+                        # GERA LINK DO GMAIL DE ATUALIZAÇÃO
+                        params_up = {
+                            "view": "cm", 
+                            "fs": "1", 
+                            "to": email_cliente, 
+                            "su": subject_up, 
+                            "body": body_up
+                        }
+                        link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params_up)}"
+                        st.link_button(f"📧 Gmail (Script Atualização)", link_gmail, use_container_width=True)
+            except Exception as e:
+                pass
 
 # =========================================================
 #  PARTE INFERIOR: LISTA GERAL (SEMPRE VISÍVEL)
@@ -656,10 +668,12 @@ Obrigado,"""
 st.divider()
 st.subheader("📋 Lista Geral de Clientes")
 
+# Configuração de Colunas do Data Editor
 col_config = {
     "pj_id": st.column_config.TextColumn("ID", disabled=True),
     "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
     "cnpj": st.column_config.TextColumn("CNPJ", disabled=True),
+    "ABRIR": st.column_config.CheckboxColumn("Ver Ficha", default=False, width="small"),
     "area_atuacao_nome": st.column_config.TextColumn("Área", disabled=True),
     "email_1": st.column_config.TextColumn("E-mail", disabled=False),
     "telefone_1": st.column_config.TextColumn("Telefone", disabled=False),
@@ -673,7 +687,7 @@ col_config = {
     "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
     "obs": st.column_config.TextColumn("Obs", width="large"),
     
-    # DATAS E GAPS - Configurados como texto
+    # DATAS E GAPS
     "data_tentativa_1": st.column_config.DateColumn("Tentativa 1", format="DD/MM/YYYY"),
     "data_tentativa_2": st.column_config.DateColumn("Tentativa 2", format="DD/MM/YYYY"),
     "data_tentativa_3": st.column_config.DateColumn("Tentativa 3", format="DD/MM/YYYY"),
@@ -682,19 +696,23 @@ col_config = {
 }
 
 cols_display = [
-    'pj_id', 'razao_social', 'cnpj', 'status_venda', 
+    'pj_id', 'razao_social', 'cnpj', 'ABRIR', 'status_venda', 
     'data_tentativa_1', 'gap_1_2', 
     'data_tentativa_2', 'gap_2_3', 
     'data_tentativa_3',
     'obs', 'telefone_1', 'Ultima_Compra', 'email_1', 'area_atuacao_nome'
 ]
 
-# CORREÇÃO CRÍTICA: Força colunas de texto para serem string antes do editor
+# Força colunas de texto para serem string antes do editor
 cols_text_force = ['gap_1_2', 'gap_2_3', 'telefone_1', 'email_1']
 for col in cols_text_force:
     if col in df_view.columns:
         df_view[col] = df_view[col].astype(str).replace('nan', '')
         df_view[col] = df_view[col].replace('None', '')
+
+# INSERE A COLUNA 'ABRIR' NO DATAFRAME VISUAL
+# Garante que seja False inicialmente para não ficar ticado
+df_view['ABRIR'] = False
 
 df_edit = st.data_editor(
     df_view[cols_display], 
@@ -705,16 +723,44 @@ df_edit = st.data_editor(
     height=500
 )
 
-# --- RODAPÉ DE AÇÃO ---
-c_save, c_export = st.columns([1, 1])
+# --- LÓGICA DE AÇÃO E AUTOSAVE ---
 
-with c_save:
-    if st.button("💾 Salvar Alterações Tabela", type="primary"):
-        salvar_alteracoes(df_edit, df_crm)
-        st.toast("Dados Salvos!", icon="✅")
-        import time
-        time.sleep(1)
-        st.rerun()
+# 1. VERIFICAR SE CLICOU NO BOTÃO "VER FICHA"
+rows_abrir = df_edit[df_edit['ABRIR'] == True]
+if not rows_abrir.empty:
+    target_row = rows_abrir.iloc[0]
+    
+    # Monta os labels compatíveis com os selectboxes
+    lbl_ataque = target_row['razao_social'] + " (" + target_row['Ultima_Compra'] + ")"
+    lbl_update = target_row['razao_social'] + " (Pendentes)"
+    
+    # Atualiza Session State para mudar os Cards
+    st.session_state['sel_ataque'] = lbl_ataque
+    
+    # Verifica se esse cliente está na lista de update para não dar erro
+    if lbl_update in opcoes_update if 'opcoes_update' in locals() else []:
+        st.session_state['sel_update'] = lbl_update
+        
+    st.toast(f"Abrindo ficha: {target_row['razao_social']}...", icon="📂")
+    
+    # Pequeno delay e rerun para limpar o checkbox visualmente e subir a tela
+    time.sleep(0.3)
+    st.rerun()
+
+# 2. VERIFICAR SE HOUVE EDIÇÃO DE DADOS (AUTO-SAVE)
+# Comparamos o df_edit (resultado) com o df_view (original carregado) removendo a coluna ABRIR
+dados_novos = df_edit.drop(columns=['ABRIR'])
+dados_originais = df_view[cols_display].drop(columns=['ABRIR'])
+
+# Se os dados forem diferentes, salva
+if not dados_novos.equals(dados_originais):
+    salvar_alteracoes(df_edit, df_crm)
+    st.toast("Alterações salvas automaticamente!", icon="✅")
+
+
+# --- RODAPÉ DE AÇÃO (APENAS EXPORTAR AGORA) ---
+st.divider()
+c_export, _ = st.columns([1, 4])
 
 with c_export:
     excel_data = converter_para_excel(df_edit)
