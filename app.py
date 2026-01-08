@@ -84,7 +84,7 @@ def limpar_telefone(phone):
 def gerar_sugestoes_elo_brindes(area_atuacao):
     """
     Gera sugestões baseadas no portfólio REAL da Elo Brindes usando IA.
-    Se a IA falhar, usa um fallback de brindes genéricos (não limpeza).
+    Atualizado para usar o modelo gemini-1.5-flash para evitar erro 404.
     """
     if not GEMINI_API_KEY:
         # Fallback se não tiver chave
@@ -99,7 +99,8 @@ def gerar_sugestoes_elo_brindes(area_atuacao):
         Responda EXATAMENTE no formato: Produto A|Produto B|Produto C
         Não use introduções, apenas os nomes dos produtos.
         """
-        model = genai.GenerativeModel('gemini-pro')
+        # ATUALIZADO: gemini-pro -> gemini-1.5-flash
+        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         texto = response.text.strip()
         
@@ -271,7 +272,8 @@ def gerar_email_ia(cliente, ramo, data_compra, campanha):
     Saída: ASSUNTO|CORPO_HTML
     """
     try:
-        model = genai.GenerativeModel('gemini-pro')
+        # ATUALIZADO: gemini-pro -> gemini-1.5-flash (para corrigir erro 404)
+        model = genai.GenerativeModel('gemini-1.5-flash')
         resp = model.generate_content(prompt)
         txt = resp.text.strip()
         if "|" in txt: return txt.split("|", 1)
@@ -404,7 +406,6 @@ with col_left:
             email_cli = str(cli['email_1'])
             tel_clean = limpar_telefone(tel_raw)
             
-            # --- AQUI ESTÁ A MÁGICA: CHAMA A NOVA FUNÇÃO DE SUGESTÃO ELO ---
             with st.spinner("🦅 Consultando catálogo Elo Brindes..."):
                  sugestoes, motivo_sugestao = gerar_sugestoes_elo_brindes(area_cli)
                  
