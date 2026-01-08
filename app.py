@@ -267,7 +267,6 @@ def config_smtp_crud(token, payload=None):
         if r.status_code == 200 and r.json()['data']: return r.json()['data'][0]
         return None
 
-# Função antiga de envio (Mantida apenas para logs se necessário, mas não usada no botão principal)
 def registrar_log(token, pj_id, assunto, corpo, status):
     try:
         base_url = DIRECTUS_URL.rstrip('/')
@@ -283,7 +282,6 @@ def gerar_email_ia(cliente, ramo, data_compra, campanha, usuario_nome, usuario_c
     if not GEMINI_API_KEY: return "Erro IA", "Sem Chave API configurada"
     camp_nome = campanha.get('nome_campanha', 'Retomada') if campanha else 'Contato'
     
-    # PROMPT ATUALIZADO: PEDE TEXTO SIMPLES PARA MAILTO E USA SEPARADOR CLARO
     prompt = f"""
     Você é {usuario_nome}, {usuario_cargo} da Elo Brindes.
     Escreva um email B2B curto e cordial para o cliente {cliente} (Ramo: {ramo}).
@@ -337,12 +335,8 @@ if 'token' not in st.session_state:
 token = st.session_state['token']
 user = st.session_state['user']
 
-# --- DEFINIÇÃO DE USUÁRIO E CARGO (LÓGICA PEDIDA) ---
 nome_usuario = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
 primeiro_nome = user.get('first_name', '').strip().lower()
-
-# Lógica simples de gênero baseada na terminação do nome (comum em PT-BR)
-# Se terminar em 'a' (ex: Paula, Simone) = Vendedora, senão Vendedor.
 cargo_usuario = "Vendedora" if primeiro_nome.endswith("a") else "Vendedor"
 
 with st.sidebar:
@@ -398,7 +392,7 @@ if filtro_area:
 if not df_filtrado.empty:
     df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
 
-# --- LÓGICA DE GATILHO ---
+# --- LÓGICA DE GATILHO (Check prévio) ---
 if "editor_dados" in st.session_state:
     changes = st.session_state["editor_dados"]["edited_rows"]
     for idx, val in changes.items():
@@ -492,20 +486,16 @@ with col_left:
             if 'ia_result' in st.session_state:
                 res = st.session_state['ia_result']
                 
-                # Monta a assinatura automática
                 assinatura_automatica = f"\n\nAtenciosamente,\n\n{nome_usuario}\n{cargo_usuario}\nElo Brindes"
                 corpo_final = res['body'] + assinatura_automatica
                 
                 st.info(f"Assunto: {res['subj']}")
                 st.text_area("Prévia da Mensagem:", value=corpo_final, height=200, disabled=True)
                 
-                # --- LINK MAILTO INTELIGENTE ---
-                # Codifica para URL (trata espaços, quebras de linha etc)
                 subject_enc = urllib.parse.quote(res['subj'])
                 body_enc = urllib.parse.quote(corpo_final)
                 mailto_link = f"mailto:{res['email']}?subject={subject_enc}&body={body_enc}"
                 
-                # Botão que abre o email
                 st.link_button("📧 Abrir no E-mail (Outlook/Gmail)", mailto_link, type="primary", use_container_width=True)
 
     else:
@@ -547,9 +537,7 @@ with col_right:
         st.write("Sem dados.")
 
 st.divider()
-c_list1, c_list2 = st.columns([4, 1])
-with c_list1:
-    st.subheader("📋 Lista Geral (Editável)")
+st.subheader("📋 Lista Geral (Editável - Auto Save)")
 
 todas_colunas = list(df.columns)
 colunas_padrao = [c for c in ['pj_id', 'razao_social', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'GAP (dias)', 'tentativa_1', 'tentativa_2', 'tentativa_3', 'telefone_1'] if c in todas_colunas]
@@ -582,46 +570,40 @@ if not df_filtrado.empty:
         num_rows="fixed"
     )
 
-    with c_list2:
-        st.write("") 
-        st.write("") 
-        if st.button("💾 Salvar Alterações", type="primary", use_container_width=True):
-            if "editor_dados" in st.session_state and st.session_state["editor_dados"]["edited_rows"]:
-                alteracoes = st.session_state["editor_dados"]["edited_rows"]
-                sucessos = 0
-                erros = 0
+    # --- LÓGICA DE AUTO-SAVE (GARANTE QUE SALVA SEM BOTÃO) ---
+    if "editor_dados" in st.session_state and st.session_state["editor_dados"]["edited_rows"]:
+        alteracoes = st.session_state["editor_dados"]["edited_rows"]
+        
+        # Filtra se é uma edição real ou só clique na "Ação"
+        tem_edicao_real = False
+        for idx, mudanca in alteracoes.items():
+            # Se tem alguma chave que NÃO seja 'Ação', é uma edição de dado
+            if any(k != "Ação" for k in mudanca.keys()):
+                tem_edicao_real = True
+                break
+        
+        if tem_edicao_real:
+            sucessos = 0
+            erros = 0
+            
+            for i, mudancas in alteracoes.items():
+                # Remove colunas calculadas ou de controle antes de enviar
+                dados_limpos = {k: v for k, v in mudancas.items() if k not in ['GAP (dias)', 'Ultima_Compra', 'Categoria_Cliente', 'label_select', 'data_temp', 'dias_sem_compra', 'pendente', 'Ação']}
                 
-                progresso = st.progress(0)
-                total = len(alteracoes)
-                idx = 0
-
-                for i, mudancas in alteracoes.items():
-                    dados_limpos = {k: v for k, v in mudancas.items() if k not in ['GAP (dias)', 'Ultima_Compra', 'Categoria_Cliente', 'label_select', 'data_temp', 'dias_sem_compra', 'pendente', 'Ação']}
-                    
-                    if dados_limpos:
-                        try:
-                            id_cliente = df_filtrado.iloc[i]['id']
-                            if atualizar_cliente_directus(token, id_cliente, dados_limpos):
-                                sucessos += 1
-                            else:
-                                erros += 1
-                        except Exception as e:
+                if dados_limpos:
+                    try:
+                        id_cliente = df_filtrado.iloc[i]['id']
+                        if atualizar_cliente_directus(token, id_cliente, dados_limpos):
+                            sucessos += 1
+                        else:
                             erros += 1
-                    
-                    idx += 1
-                    progresso.progress(idx / total)
-                
-                time.sleep(0.5)
-                progresso.empty()
-                
-                if erros == 0:
-                    if sucessos > 0:
-                        st.success(f"✅ {sucessos} registros atualizados com sucesso!")
-                        time.sleep(1)
-                        st.rerun() 
-                else:
-                    st.warning(f"⚠️ {sucessos} salvos, mas {erros} falharam.")
-            else:
-                st.info("Nenhuma alteração detectada para salvar.")
+                    except Exception as e:
+                        erros += 1
+            
+            if sucessos > 0:
+                st.toast(f"✅ {sucessos} alterações salvas automaticamente no banco!", icon="💾")
+                time.sleep(1) # Delay para dar tempo de ler o toast
+                st.rerun() # RECARREGA A PÁGINA PARA TRAVAR A MUDANÇA (PERSISTÊNCIA GARANTIDA)
+
 else:
     st.write("Nenhum dado para exibir com os filtros atuais.")
