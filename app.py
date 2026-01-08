@@ -363,6 +363,11 @@ if filtro_status:
 if filtro_area:
     df_filtrado = df_filtrado[df_filtrado['area_atuacao'].astype(str).isin(filtro_area)]
 
+# --- CRIAÇÃO DA COLUNA DE BUSCA ANTES DE TUDO PARA GARANTIR SINCRONIA ---
+if not df_filtrado.empty:
+    df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
+    df_filtrado['pendente'] = df_filtrado.apply(checar_pendencia, axis=1)
+
 st.divider()
 
 col_left, col_right = st.columns([1, 1], gap="large")
@@ -370,13 +375,13 @@ col_left, col_right = st.columns([1, 1], gap="large")
 with col_left:
     st.subheader("🚀 Modo de Ataque (Vendas)")
     if not df_filtrado.empty:
-        df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
         opcoes = sorted(df_filtrado['label_select'].tolist())
         
         # --- SESSÃO DO SELECTBOX DE ATAQUE ---
         if "sb_principal" not in st.session_state:
             st.session_state["sb_principal"] = "Selecione..."
         
+        # Garante que o valor no session state é válido
         if st.session_state["sb_principal"] not in (["Selecione..."] + opcoes):
              st.session_state["sb_principal"] = "Selecione..."
 
@@ -456,17 +461,16 @@ with col_right:
     st.subheader("📝 Modo Atualização")
     
     if not df_filtrado.empty:
-        df_filtrado['pendente'] = df_filtrado.apply(checar_pendencia, axis=1)
         df_pend = df_filtrado[df_filtrado['pendente'] == True].copy()
         
-        df_pend['lbl'] = df_pend['razao_social'] + " (Pendente)"
-        opcoes_update = sorted(df_pend['lbl'].tolist())
+        df_pend['lbl_update'] = df_pend['razao_social'] + " (Pendente)"
+        opcoes_update = sorted(df_pend['lbl_update'].tolist())
         
         # --- SESSÃO DO SELECTBOX DE ATUALIZAÇÃO ---
         if "sb_update" not in st.session_state:
             st.session_state["sb_update"] = "Selecione..."
 
-        # Garante que o valor no session state é válido para a lista atual
+        # Garante que o valor no session state é válido
         if st.session_state["sb_update"] not in (["Selecione..."] + opcoes_update):
              st.session_state["sb_update"] = "Selecione..."
 
@@ -480,7 +484,7 @@ with col_right:
             )
             
             if sel_up and sel_up != "Selecione...":
-                cli_up = df_pend[df_pend['lbl'] == sel_up].iloc[0]
+                cli_up = df_pend[df_pend['lbl_update'] == sel_up].iloc[0]
                 st.markdown(f"""
                 <div class="foco-card" style="border-left: 6px solid #FFD700;">
                     <h3 style='color:#FFD700'>⚠️ Dados Faltantes</h3>
@@ -501,7 +505,6 @@ with c_list1:
     st.subheader("📋 Lista Geral (Editável)")
 
 todas_colunas = list(df.columns)
-# Remove ID da lista padrão de exibição
 colunas_padrao = [c for c in ['pj_id', 'razao_social', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'GAP (dias)', 'tentativa_1', 'tentativa_2', 'tentativa_3', 'telefone_1'] if c in todas_colunas]
 
 colunas_selecionadas = st.multiselect(
@@ -517,7 +520,9 @@ if not df_filtrado.empty:
         "Categoria_Cliente": st.column_config.TextColumn("Status", disabled=True),
         "Ultima_Compra": st.column_config.TextColumn("Ult. Compra", disabled=True),
         "GAP (dias)": st.column_config.NumberColumn("GAP (dias)", disabled=True),
-        "id": None, # <--- Oculta o ID totalmente da visão
+        "id": None, # Oculta o ID 
+        "label_select": None, # Oculta a coluna de busca
+        "pendente": None,
         "Ação": st.column_config.CheckboxColumn("➡️ Abrir", help="Clique para abrir os dados deste cliente lá em cima", default=False)
     }
 
@@ -526,7 +531,7 @@ if not df_filtrado.empty:
 
     # Exibe editor
     edicoes = st.data_editor(
-        df_filtrado[["Ação"] + colunas_selecionadas + ['id']], 
+        df_filtrado[["Ação"] + colunas_selecionadas + ['id', 'label_select']], 
         key="editor_dados",
         hide_index=True,
         column_config=config_cols,
@@ -534,29 +539,33 @@ if not df_filtrado.empty:
         num_rows="fixed"
     )
 
-    # --- LÓGICA DO CLIQUE NA AÇÃO (BOTÃO) ---
+    # --- LÓGICA BLINDADA DO BOTÃO 'ABRIR' ---
     if "editor_dados" in st.session_state:
         mudancas = st.session_state["editor_dados"]["edited_rows"]
+        precisa_reload = False
+        
         for idx, val in mudancas.items():
             if "Ação" in val and val["Ação"] == True:
-                # O usuário clicou no checkbox "Ação"
+                # Recupera o cliente exato baseado no index da tabela filtrada
                 try:
-                    # 1. Recupera o cliente selecionado
-                    row_selecionada = df_filtrado.iloc[idx]
+                    row_selecionada = df_filtrado.iloc[int(idx)]
                     
-                    # 2. Força abertura do Modo Ataque
+                    # 1. Define o Selectbox de Ataque
                     st.session_state["sb_principal"] = row_selecionada['label_select']
                     
-                    # 3. Força abertura do Modo Atualização (Se aplicável)
+                    # 2. Define o Selectbox de Atualização (se for pendente)
                     if checar_pendencia(row_selecionada):
-                        lbl_pendente = row_selecionada['razao_social'] + " (Pendente)"
-                        st.session_state["sb_update"] = lbl_pendente
+                        st.session_state["sb_update"] = row_selecionada['razao_social'] + " (Pendente)"
                     else:
                         st.session_state["sb_update"] = "Selecione..."
 
-                    # 4. Recarrega a página para aplicar
-                    st.rerun() 
+                    precisa_reload = True
                 except: pass
+        
+        if precisa_reload:
+            # TRUQUE: Deleta o estado do editor para "desmarcar" o checkbox visualmente e forçar refresh limpo
+            del st.session_state["editor_dados"]
+            st.rerun()
 
     with c_list2:
         st.write("") 
@@ -569,7 +578,7 @@ if not df_filtrado.empty:
                 
                 progresso = st.progress(0)
                 total = len(alteracoes)
-                idx = 0
+                idx_prog = 0
 
                 for i, mudancas in alteracoes.items():
                     # Pula se for só o clique do botão Ação
@@ -585,8 +594,8 @@ if not df_filtrado.empty:
                         except Exception as e:
                             erros += 1
                     
-                    idx += 1
-                    progresso.progress(idx / total)
+                    idx_prog += 1
+                    progresso.progress(idx_prog / total)
                 
                 time.sleep(0.5)
                 progresso.empty()
@@ -595,6 +604,8 @@ if not df_filtrado.empty:
                     if sucessos > 0:
                         st.success(f"✅ {sucessos} registros atualizados com sucesso!")
                         time.sleep(1)
+                        # Limpa para garantir estado novo
+                        del st.session_state["editor_dados"]
                         st.rerun() 
                 else:
                     st.warning(f"⚠️ {sucessos} salvos, mas {erros} falharam.")
