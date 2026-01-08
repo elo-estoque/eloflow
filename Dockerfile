@@ -2,15 +2,21 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Instala as dependências (pandas, openpyxl, etc)
+# Instala dependências do sistema necessárias
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia o código
 COPY . .
 
-# Expõe a porta 8501
 EXPOSE 8501
 
-# Inicia o app na porta 8501
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
+
+ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
