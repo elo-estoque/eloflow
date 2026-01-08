@@ -77,21 +77,44 @@ if GEMINI_API_KEY:
 #  FUNÇÕES AUXILIARES E DE NEGÓCIO
 # =========================================================
 
+# --- NOVIDADE: CAÇADOR DE MODELO DINÂMICO ---
+@st.cache_resource
+def obter_modelo_compativel():
+    """Varre a API do Google para achar qual modelo está funcionando hoje."""
+    if not GEMINI_API_KEY: return "gemini-pro" # Fallback cego
+    try:
+        modelos = genai.list_models()
+        modelos_validos = []
+        for m in modelos:
+            if 'generateContent' in m.supported_generation_methods:
+                modelos_validos.append(m.name)
+        
+        # Tenta achar os melhores na ordem de preferência
+        for m in modelos_validos:
+            if 'flash' in m: return m # Preferencia por Flash (Rápido)
+        for m in modelos_validos:
+            if 'pro' in m: return m # Preferencia por Pro
+        
+        # Se não achar preferido, pega o primeiro que funcionar
+        if modelos_validos:
+            return modelos_validos[0]
+            
+    except:
+        pass
+    return "gemini-1.5-flash" # Chute final se a busca falhar
+
 def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
 def gerar_sugestoes_elo_brindes(area_atuacao):
-    """
-    Gera sugestões baseadas no portfólio REAL da Elo Brindes usando IA.
-    Atualizado para usar o modelo gemini-1.5-flash para evitar erro 404.
-    """
     if not GEMINI_API_KEY:
-        # Fallback se não tiver chave
         return ["🎁 Kit Boas Vindas Personalizado", "🎁 Caneta Metal Premium", "🎁 Caderno Moleskine com Logo"], "Sugestão Padrão (Sem IA)"
     
     try:
-        # Prompt focado no site Elo Brindes
+        nome_modelo = obter_modelo_compativel() # <--- USA O MODELO QUE ACHAR
+        model = genai.GenerativeModel(nome_modelo)
+        
         prompt = f"""
         Você é um consultor especialista da Elo Brindes (www.elobrindes.com.br).
         O cliente atua na área: '{area_atuacao}'.
@@ -99,21 +122,16 @@ def gerar_sugestoes_elo_brindes(area_atuacao):
         Responda EXATAMENTE no formato: Produto A|Produto B|Produto C
         Não use introduções, apenas os nomes dos produtos.
         """
-        # ATUALIZADO: gemini-pro -> gemini-1.5-flash
-        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         texto = response.text.strip()
         
         if "|" in texto:
             produtos = texto.split("|")
-            # Adiciona emoji de caixa se a IA não mandou
             produtos_fmt = [f"📦 {p.strip().replace('📦', '')}" for p in produtos[:3]]
             return produtos_fmt, f"Sugestão IA (Baseada em {area_atuacao})"
         else:
             return [f"📦 {texto}"], "Sugestão IA"
-            
     except Exception:
-        # Fallback de segurança (Brindes, não limpeza)
         return ["🎁 Garrafa Térmica Personalizada", "🎁 Mochila Executiva", "🎁 Kit Tecnológico (Powerbank)"], "Sugestão Geral (Erro IA)"
 
 # =========================================================
@@ -272,8 +290,8 @@ def gerar_email_ia(cliente, ramo, data_compra, campanha):
     Saída: ASSUNTO|CORPO_HTML
     """
     try:
-        # ATUALIZADO: gemini-pro -> gemini-1.5-flash (para corrigir erro 404)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        nome_modelo = obter_modelo_compativel() # <--- USA O MODELO QUE ACHAR
+        model = genai.GenerativeModel(nome_modelo)
         resp = model.generate_content(prompt)
         txt = resp.text.strip()
         if "|" in txt: return txt.split("|", 1)
