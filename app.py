@@ -81,13 +81,6 @@ def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
-def checar_pendencia(row):
-    t = limpar_telefone(row['telefone_1'])
-    e = str(row['email_1'])
-    if not t or len(t) < 8: return True
-    if not e or '@' not in e or 'nan' in e: return True
-    return False
-
 def gerar_sugestoes_fixas(area_atuacao):
     area_upper = str(area_atuacao).upper()
     sugestoes = []
@@ -109,7 +102,7 @@ def gerar_sugestoes_fixas(area_atuacao):
     return sugestoes, motivo
 
 # =========================================================
-#  FUNÇÕES DE BACKEND (COM CORREÇÃO DE ERRO DE COLUNA)
+#  FUNÇÕES DE BACKEND
 # =========================================================
 
 def login_directus_debug(email, password):
@@ -150,36 +143,31 @@ def carregar_clientes(token):
     base_url = DIRECTUS_URL.rstrip('/')
     headers = {"Authorization": f"Bearer {token}"}
     
-    # 1. Tenta carregar TUDO (incluindo campos novos)
+    # Tenta carregar campos, com fallback se não existirem
     fields_full = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,tentativa_1,tentativa_2,tentativa_3"
-    
-    # 2. Se der erro (porque campos não existem), carrega só o BÁSICO (Segurança)
     fields_safe = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj"
     
     df = pd.DataFrame()
     colunas_faltantes = False
 
     try:
-        # TENTATIVA 1: Completa
         url = f"{base_url}/items/clientes?limit=-1&fields={fields_full}"
         r = requests.get(url, headers=headers, timeout=10, verify=False)
         
         if r.status_code == 200:
             df = pd.DataFrame(r.json()['data'])
         else:
-            # TENTATIVA 2: Fallback de Segurança
+            # Fallback
             colunas_faltantes = True
             url_safe = f"{base_url}/items/clientes?limit=-1&fields={fields_safe}"
             r_safe = requests.get(url_safe, headers=headers, timeout=10, verify=False)
             if r_safe.status_code == 200:
                 df = pd.DataFrame(r_safe.json()['data'])
-                # Cria colunas vazias na memória para o app não quebrar
                 df['tentativa_1'] = None
                 df['tentativa_2'] = None
                 df['tentativa_3'] = None
 
         if not df.empty:
-            # Processamento
             df['data_temp'] = pd.to_datetime(df['data_ultima_compra'], errors='coerce')
             df['Ultima_Compra'] = df['data_temp'].dt.strftime('%d/%m/%Y').fillna("-")
             hoje = pd.Timestamp.now()
@@ -195,12 +183,11 @@ def carregar_clientes(token):
             df['Categoria_Cliente'] = df.apply(definir_cat, axis=1)
             df['GAP (dias)'] = df['dias_sem_compra']
             
-            # Limpeza de Nones para edição
             for col in ['tentativa_1', 'tentativa_2', 'tentativa_3']:
                 df[col] = df[col].fillna("")
 
             if colunas_faltantes:
-                st.toast("⚠️ Aviso: As colunas de 'Tentativa' ainda não existem no Directus. As edições não serão salvas até você criá-las lá.", icon="⚠️")
+                st.toast("⚠️ Aviso: Colunas de 'Tentativa' não encontradas no Directus. Criando temporariamente.", icon="⚠️")
                 
             return df
             
@@ -363,10 +350,32 @@ if filtro_status:
 if filtro_area:
     df_filtrado = df_filtrado[df_filtrado['area_atuacao'].astype(str).isin(filtro_area)]
 
-# --- CRIAÇÃO DA COLUNA DE BUSCA ANTES DE TUDO PARA GARANTIR SINCRONIA ---
+# CRIAÇÃO DA COLUNA DE SELEÇÃO E ID UNICO PARA O SELECTBOX
 if not df_filtrado.empty:
     df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
-    df_filtrado['pendente'] = df_filtrado.apply(checar_pendencia, axis=1)
+
+# =========================================================================================
+#  LÓGICA PRIORITÁRIA: DETECÇÃO DE CLIQUE NA TABELA (ANTES DE DESENHAR O MENU)
+# =========================================================================================
+if "editor_dados" in st.session_state:
+    changes = st.session_state["editor_dados"]["edited_rows"]
+    # Verifica se houve clique na ação
+    for idx, val in changes.items():
+        if val.get("Ação") is True:
+            # Pega o cliente correspondente ao índice clicado
+            try:
+                # O idx retornado pelo data_editor é relativo ao df exibido nele (df_filtrado)
+                # Precisamos pegar o nome exato para forçar o selectbox
+                cliente_alvo = df_filtrado.iloc[int(idx)]['label_select']
+                
+                # Atualiza a chave do selectbox APENAS se for diferente (para evitar loops)
+                if st.session_state.get("sb_principal") != cliente_alvo:
+                    st.session_state["sb_principal"] = cliente_alvo
+                    # NÃO PRECISA DE RERUN AQUI, POIS O MENU SERÁ DESENHADO LOGO ABAIXO COM ESSE VALOR
+            except Exception as e:
+                pass # Ignora erros de índice se a tabela mudou muito rápido
+
+# =========================================================================================
 
 st.divider()
 
@@ -377,14 +386,13 @@ with col_left:
     if not df_filtrado.empty:
         opcoes = sorted(df_filtrado['label_select'].tolist())
         
-        # --- SESSÃO DO SELECTBOX DE ATAQUE ---
+        # Garante que a variável de sessão existe e é válida
         if "sb_principal" not in st.session_state:
             st.session_state["sb_principal"] = "Selecione..."
-        
-        # Garante que o valor no session state é válido
         if st.session_state["sb_principal"] not in (["Selecione..."] + opcoes):
              st.session_state["sb_principal"] = "Selecione..."
 
+        # O widget lê a session_state["sb_principal"] automaticamente por ter a key igual
         selecionado = st.selectbox(
             "Busque Cliente (Filtrado):", 
             ["Selecione..."] + opcoes, 
@@ -459,32 +467,25 @@ with col_left:
 
 with col_right:
     st.subheader("📝 Modo Atualização")
+    def checar_pendencia(row):
+        t = limpar_telefone(row['telefone_1'])
+        e = str(row['email_1'])
+        if not t or len(t) < 8: return True
+        if not e or '@' not in e or 'nan' in e: return True
+        return False
     
     if not df_filtrado.empty:
+        df_filtrado['pendente'] = df_filtrado.apply(checar_pendencia, axis=1)
         df_pend = df_filtrado[df_filtrado['pendente'] == True].copy()
         
-        df_pend['lbl_update'] = df_pend['razao_social'] + " (Pendente)"
-        opcoes_update = sorted(df_pend['lbl_update'].tolist())
-        
-        # --- SESSÃO DO SELECTBOX DE ATUALIZAÇÃO ---
-        if "sb_update" not in st.session_state:
-            st.session_state["sb_update"] = "Selecione..."
-
-        # Garante que o valor no session state é válido
-        if st.session_state["sb_update"] not in (["Selecione..."] + opcoes_update):
-             st.session_state["sb_update"] = "Selecione..."
-
         if df_pend.empty:
             st.success("✅ Nenhum cadastro pendente nos filtros selecionados!")
         else:
-            sel_up = st.selectbox(
-                "Atualizar:", 
-                ["Selecione..."] + opcoes_update,
-                key="sb_update"
-            )
+            df_pend['lbl'] = df_pend['razao_social'] + " (Pendente)"
+            sel_up = st.selectbox("Atualizar:", ["Selecione..."] + sorted(df_pend['lbl'].tolist()))
             
             if sel_up and sel_up != "Selecione...":
-                cli_up = df_pend[df_pend['lbl_update'] == sel_up].iloc[0]
+                cli_up = df_pend[df_pend['lbl'] == sel_up].iloc[0]
                 st.markdown(f"""
                 <div class="foco-card" style="border-left: 6px solid #FFD700;">
                     <h3 style='color:#FFD700'>⚠️ Dados Faltantes</h3>
@@ -520,9 +521,7 @@ if not df_filtrado.empty:
         "Categoria_Cliente": st.column_config.TextColumn("Status", disabled=True),
         "Ultima_Compra": st.column_config.TextColumn("Ult. Compra", disabled=True),
         "GAP (dias)": st.column_config.NumberColumn("GAP (dias)", disabled=True),
-        "id": None, # Oculta o ID 
-        "label_select": None, # Oculta a coluna de busca
-        "pendente": None,
+        "id": None, # ID Oculto
         "Ação": st.column_config.CheckboxColumn("➡️ Abrir", help="Clique para abrir os dados deste cliente lá em cima", default=False)
     }
 
@@ -531,41 +530,13 @@ if not df_filtrado.empty:
 
     # Exibe editor
     edicoes = st.data_editor(
-        df_filtrado[["Ação"] + colunas_selecionadas + ['id', 'label_select']], 
+        df_filtrado[["Ação"] + colunas_selecionadas + ['id']], 
         key="editor_dados",
         hide_index=True,
         column_config=config_cols,
         use_container_width=True,
         num_rows="fixed"
     )
-
-    # --- LÓGICA BLINDADA DO BOTÃO 'ABRIR' ---
-    if "editor_dados" in st.session_state:
-        mudancas = st.session_state["editor_dados"]["edited_rows"]
-        precisa_reload = False
-        
-        for idx, val in mudancas.items():
-            if "Ação" in val and val["Ação"] == True:
-                # Recupera o cliente exato baseado no index da tabela filtrada
-                try:
-                    row_selecionada = df_filtrado.iloc[int(idx)]
-                    
-                    # 1. Define o Selectbox de Ataque
-                    st.session_state["sb_principal"] = row_selecionada['label_select']
-                    
-                    # 2. Define o Selectbox de Atualização (se for pendente)
-                    if checar_pendencia(row_selecionada):
-                        st.session_state["sb_update"] = row_selecionada['razao_social'] + " (Pendente)"
-                    else:
-                        st.session_state["sb_update"] = "Selecione..."
-
-                    precisa_reload = True
-                except: pass
-        
-        if precisa_reload:
-            # TRUQUE: Deleta o estado do editor para "desmarcar" o checkbox visualmente e forçar refresh limpo
-            del st.session_state["editor_dados"]
-            st.rerun()
 
     with c_list2:
         st.write("") 
@@ -578,10 +549,10 @@ if not df_filtrado.empty:
                 
                 progresso = st.progress(0)
                 total = len(alteracoes)
-                idx_prog = 0
+                idx = 0
 
                 for i, mudancas in alteracoes.items():
-                    # Pula se for só o clique do botão Ação
+                    # Ignora a coluna de Ação no salvamento do banco
                     dados_limpos = {k: v for k, v in mudancas.items() if k not in ['GAP (dias)', 'Ultima_Compra', 'Categoria_Cliente', 'label_select', 'data_temp', 'dias_sem_compra', 'pendente', 'Ação']}
                     
                     if dados_limpos:
@@ -594,8 +565,8 @@ if not df_filtrado.empty:
                         except Exception as e:
                             erros += 1
                     
-                    idx_prog += 1
-                    progresso.progress(idx_prog / total)
+                    idx += 1
+                    progresso.progress(idx / total)
                 
                 time.sleep(0.5)
                 progresso.empty()
@@ -604,8 +575,6 @@ if not df_filtrado.empty:
                     if sucessos > 0:
                         st.success(f"✅ {sucessos} registros atualizados com sucesso!")
                         time.sleep(1)
-                        # Limpa para garantir estado novo
-                        del st.session_state["editor_dados"]
                         st.rerun() 
                 else:
                     st.warning(f"⚠️ {sucessos} salvos, mas {erros} falharam.")
