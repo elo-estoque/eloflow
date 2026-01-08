@@ -81,6 +81,13 @@ def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
+def checar_pendencia(row):
+    t = limpar_telefone(row['telefone_1'])
+    e = str(row['email_1'])
+    if not t or len(t) < 8: return True
+    if not e or '@' not in e or 'nan' in e: return True
+    return False
+
 def gerar_sugestoes_fixas(area_atuacao):
     area_upper = str(area_atuacao).upper()
     sugestoes = []
@@ -366,11 +373,10 @@ with col_left:
         df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
         opcoes = sorted(df_filtrado['label_select'].tolist())
         
-        # --- CORREÇÃO DO SELECTBOX: AGORA ELE OBEDECE AO SESSION STATE ---
+        # --- SESSÃO DO SELECTBOX DE ATAQUE ---
         if "sb_principal" not in st.session_state:
             st.session_state["sb_principal"] = "Selecione..."
         
-        # Garante que o valor no session state é válido para a lista atual
         if st.session_state["sb_principal"] not in (["Selecione..."] + opcoes):
              st.session_state["sb_principal"] = "Selecione..."
 
@@ -448,23 +454,30 @@ with col_left:
 
 with col_right:
     st.subheader("📝 Modo Atualização")
-    def checar_pendencia(row):
-        t = limpar_telefone(row['telefone_1'])
-        e = str(row['email_1'])
-        if not t or len(t) < 8: return True
-        if not e or '@' not in e or 'nan' in e: return True
-        return False
     
     if not df_filtrado.empty:
         df_filtrado['pendente'] = df_filtrado.apply(checar_pendencia, axis=1)
         df_pend = df_filtrado[df_filtrado['pendente'] == True].copy()
         
+        df_pend['lbl'] = df_pend['razao_social'] + " (Pendente)"
+        opcoes_update = sorted(df_pend['lbl'].tolist())
+        
+        # --- SESSÃO DO SELECTBOX DE ATUALIZAÇÃO ---
+        if "sb_update" not in st.session_state:
+            st.session_state["sb_update"] = "Selecione..."
+
+        # Garante que o valor no session state é válido para a lista atual
+        if st.session_state["sb_update"] not in (["Selecione..."] + opcoes_update):
+             st.session_state["sb_update"] = "Selecione..."
+
         if df_pend.empty:
             st.success("✅ Nenhum cadastro pendente nos filtros selecionados!")
         else:
-            df_pend['lbl'] = df_pend['razao_social'] + " (Pendente)"
-            # Tenta sincronizar atualização também se possível, mas mantendo simples
-            sel_up = st.selectbox("Atualizar:", ["Selecione..."] + sorted(df_pend['lbl'].tolist()))
+            sel_up = st.selectbox(
+                "Atualizar:", 
+                ["Selecione..."] + opcoes_update,
+                key="sb_update"
+            )
             
             if sel_up and sel_up != "Selecione...":
                 cli_up = df_pend[df_pend['lbl'] == sel_up].iloc[0]
@@ -528,9 +541,20 @@ if not df_filtrado.empty:
             if "Ação" in val and val["Ação"] == True:
                 # O usuário clicou no checkbox "Ação"
                 try:
-                    cliente_alvo = df_filtrado.iloc[idx]['label_select']
-                    # AQUI ESTÁ O PULO DO GATO: Atualiza diretamente a chave do Selectbox
-                    st.session_state["sb_principal"] = cliente_alvo
+                    # 1. Recupera o cliente selecionado
+                    row_selecionada = df_filtrado.iloc[idx]
+                    
+                    # 2. Força abertura do Modo Ataque
+                    st.session_state["sb_principal"] = row_selecionada['label_select']
+                    
+                    # 3. Força abertura do Modo Atualização (Se aplicável)
+                    if checar_pendencia(row_selecionada):
+                        lbl_pendente = row_selecionada['razao_social'] + " (Pendente)"
+                        st.session_state["sb_update"] = lbl_pendente
+                    else:
+                        st.session_state["sb_update"] = "Selecione..."
+
+                    # 4. Recarrega a página para aplicar
                     st.rerun() 
                 except: pass
 
