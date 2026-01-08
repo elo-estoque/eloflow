@@ -77,11 +77,10 @@ if GEMINI_API_KEY:
 #  FUNÇÕES AUXILIARES E DE NEGÓCIO
 # =========================================================
 
-# --- NOVIDADE: CAÇADOR DE MODELO DINÂMICO ---
+# --- CAÇADOR DE MODELO DINÂMICO ---
 @st.cache_resource
 def obter_modelo_compativel():
-    """Varre a API do Google para achar qual modelo está funcionando hoje."""
-    if not GEMINI_API_KEY: return "gemini-pro" # Fallback cego
+    if not GEMINI_API_KEY: return "gemini-pro"
     try:
         modelos = genai.list_models()
         modelos_validos = []
@@ -89,19 +88,17 @@ def obter_modelo_compativel():
             if 'generateContent' in m.supported_generation_methods:
                 modelos_validos.append(m.name)
         
-        # Tenta achar os melhores na ordem de preferência
         for m in modelos_validos:
-            if 'flash' in m: return m # Preferencia por Flash (Rápido)
+            if 'flash' in m: return m
         for m in modelos_validos:
-            if 'pro' in m: return m # Preferencia por Pro
+            if 'pro' in m: return m
         
-        # Se não achar preferido, pega o primeiro que funcionar
         if modelos_validos:
             return modelos_validos[0]
             
     except:
         pass
-    return "gemini-1.5-flash" # Chute final se a busca falhar
+    return "gemini-1.5-flash"
 
 def limpar_telefone(phone):
     if pd.isna(phone): return None
@@ -112,7 +109,7 @@ def gerar_sugestoes_elo_brindes(area_atuacao):
         return ["🎁 Kit Boas Vindas Personalizado", "🎁 Caneta Metal Premium", "🎁 Caderno Moleskine com Logo"], "Sugestão Padrão (Sem IA)"
     
     try:
-        nome_modelo = obter_modelo_compativel() # <--- USA O MODELO QUE ACHAR
+        nome_modelo = obter_modelo_compativel()
         model = genai.GenerativeModel(nome_modelo)
         
         prompt = f"""
@@ -270,6 +267,7 @@ def config_smtp_crud(token, payload=None):
         if r.status_code == 200 and r.json()['data']: return r.json()['data'][0]
         return None
 
+# Função antiga de envio (Mantida apenas para logs se necessário, mas não usada no botão principal)
 def registrar_log(token, pj_id, assunto, corpo, status):
     try:
         base_url = DIRECTUS_URL.rstrip('/')
@@ -281,37 +279,42 @@ def registrar_log(token, pj_id, assunto, corpo, status):
         requests.post(f"{base_url}/items/historico_envios", json=payload, headers=headers, verify=False)
     except: pass
 
-def gerar_email_ia(cliente, ramo, data_compra, campanha):
+def gerar_email_ia(cliente, ramo, data_compra, campanha, usuario_nome, usuario_cargo):
     if not GEMINI_API_KEY: return "Erro IA", "Sem Chave API configurada"
     camp_nome = campanha.get('nome_campanha', 'Retomada') if campanha else 'Contato'
+    
+    # PROMPT ATUALIZADO: PEDE TEXTO SIMPLES PARA MAILTO E USA SEPARADOR CLARO
     prompt = f"""
-    Escreva um email B2B curto para {cliente} ({ramo}). 
-    Ultima compra: {data_compra}. Campanha: {camp_nome}.
-    Saída: ASSUNTO|CORPO_HTML
+    Você é {usuario_nome}, {usuario_cargo} da Elo Brindes.
+    Escreva um email B2B curto e cordial para o cliente {cliente} (Ramo: {ramo}).
+    Contexto: O cliente não compra desde {data_compra}.
+    Motivo do contato: Campanha {camp_nome} e novidades no catálogo.
+    Objetivo: Agendar uma breve conversa ou enviar catálogo atualizado.
+    
+    INSTRUÇÕES OBRIGATÓRIAS:
+    1. Gere APENAS TEXTO SIMPLES (sem negrito, sem markdown, sem HTML).
+    2. Separe o ASSUNTO do CORPO com '|||'.
+    3. NÃO inclua 'Atenciosamente' ou assinatura no final, pois o sistema já coloca a sua.
+    
+    Saída esperada:
+    Assunto aqui|||Olá Fulano, corpo do email aqui...
     """
     try:
-        nome_modelo = obter_modelo_compativel() # <--- USA O MODELO QUE ACHAR
+        nome_modelo = obter_modelo_compativel()
         model = genai.GenerativeModel(nome_modelo)
         resp = model.generate_content(prompt)
         txt = resp.text.strip()
-        if "|" in txt: return txt.split("|", 1)
-        return "Contato Elo", txt
+        
+        assunto = "Contato Elo Brindes"
+        corpo = txt
+        
+        if "|||" in txt:
+            partes = txt.split("|||", 1)
+            assunto = partes[0].replace("Assunto:", "").strip()
+            corpo = partes[1].strip()
+            
+        return assunto, corpo
     except Exception as e: return "Erro", str(e)
-
-def enviar_email(conf, para, assunto, corpo):
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = conf['smtp_user']
-        msg['To'] = para
-        msg['Subject'] = assunto
-        msg.attach(MIMEText(f"{corpo}<br><br>{conf.get('assinatura_html','')}", 'html'))
-        s = smtplib.SMTP(conf['smtp_host'], conf['smtp_port'])
-        s.starttls()
-        s.login(conf['smtp_user'], conf['smtp_pass_app'])
-        s.sendmail(conf['smtp_user'], para, msg.as_string())
-        s.quit()
-        return True, "Enviado"
-    except Exception as e: return False, str(e)
 
 # =========================================================
 #  INTERFACE (STREAMLIT)
@@ -334,14 +337,24 @@ if 'token' not in st.session_state:
 token = st.session_state['token']
 user = st.session_state['user']
 
+# --- DEFINIÇÃO DE USUÁRIO E CARGO (LÓGICA PEDIDA) ---
+nome_usuario = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+primeiro_nome = user.get('first_name', '').strip().lower()
+
+# Lógica simples de gênero baseada na terminação do nome (comum em PT-BR)
+# Se terminar em 'a' (ex: Paula, Simone) = Vendedora, senão Vendedor.
+cargo_usuario = "Vendedora" if primeiro_nome.endswith("a") else "Vendedor"
+
 with st.sidebar:
     st.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
-    st.write(f"👤 **{user.get('first_name', 'Vendedor')}**")
+    st.write(f"👤 **{nome_usuario}**")
+    st.caption(f"💼 {cargo_usuario}")
     if st.button("Sair"):
         st.session_state.clear()
         st.rerun()
     st.divider()
     with st.expander("⚙️ Configurar E-mail (SMTP)"):
+        st.info("Configuração opcional. O envio agora abre seu e-mail padrão.")
         conf = config_smtp_crud(token)
         h = st.text_input("Host", value=conf['smtp_host'] if conf else "smtp.gmail.com")
         p = st.number_input("Porta", value=conf['smtp_port'] if conf else 587)
@@ -360,7 +373,7 @@ if df.empty:
     st.warning("⚠️ Sua carteira está vazia ou falha ao carregar.")
     st.stop()
 
-st.title(f"Visão Geral - {user.get('first_name','')}")
+st.title(f"Visão Geral - {nome_usuario}")
 k1, k2, k3 = st.columns(3)
 k1.markdown(f"<div class='metric-card'><h3>Total Clientes</h3><h1>{len(df)}</h1></div>", unsafe_allow_html=True)
 inativos = len(df[df['Categoria_Cliente'].astype(str).str.contains('Inativo|Frio|Crítico', case=False)])
@@ -466,22 +479,35 @@ with col_left:
                     link_gmail = f"https://mail.google.com/mail/?view=cm&fs=1&to={email_cli}&su=Contato Elo&body={script_msg}"
                     st.link_button("📧 Gmail", link_gmail, use_container_width=True)
             with b3:
+                # --- BOTÃO MÁGICO ---
                 if st.button("✨ IA Magica", use_container_width=True):
-                    if not GEMINI_API_KEY: st.error("Sem Chave IA")
+                    if not GEMINI_API_KEY: 
+                        st.error("Sem Chave IA")
                     else:
-                        subj, body = gerar_email_ia(cli['razao_social'], area_cli, cli['Ultima_Compra'], campanha)
-                        st.session_state['ia_result'] = {'subj': subj, 'body': body, 'email': email_cli}
+                        with st.spinner("🤖 Escrevendo e-mail..."):
+                            subj, body = gerar_email_ia(cli['razao_social'], area_cli, cli['Ultima_Compra'], campanha, nome_usuario, cargo_usuario)
+                            st.session_state['ia_result'] = {'subj': subj, 'body': body, 'email': email_cli}
             
+            # --- ÁREA DE RESULTADO DA IA ---
             if 'ia_result' in st.session_state:
                 res = st.session_state['ia_result']
+                
+                # Monta a assinatura automática
+                assinatura_automatica = f"\n\nAtenciosamente,\n\n{nome_usuario}\n{cargo_usuario}\nElo Brindes"
+                corpo_final = res['body'] + assinatura_automatica
+                
                 st.info(f"Assunto: {res['subj']}")
-                st.markdown(res['body'], unsafe_allow_html=True)
-                if st.button("🚀 Enviar Email IA Agora"):
-                    conf = config_smtp_crud(token)
-                    if conf:
-                        ok, msg = enviar_email(conf, res['email'], res['subj'], res['body'])
-                        if ok: st.success("Enviado!"); registrar_log(token, cli['pj_id'], res['subj'], res['body'], "Sucesso")
-                        else: st.error(f"Erro: {msg}")
+                st.text_area("Prévia da Mensagem:", value=corpo_final, height=200, disabled=True)
+                
+                # --- LINK MAILTO INTELIGENTE ---
+                # Codifica para URL (trata espaços, quebras de linha etc)
+                subject_enc = urllib.parse.quote(res['subj'])
+                body_enc = urllib.parse.quote(corpo_final)
+                mailto_link = f"mailto:{res['email']}?subject={subject_enc}&body={body_enc}"
+                
+                # Botão que abre o email
+                st.link_button("📧 Abrir no E-mail (Outlook/Gmail)", mailto_link, type="primary", use_container_width=True)
+
     else:
         st.info("Nenhum cliente encontrado com os filtros atuais.")
 
