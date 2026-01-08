@@ -360,12 +360,28 @@ st.divider()
 
 col_left, col_right = st.columns([1, 1], gap="large")
 
+# GESTÃO DO GATILHO DA TABELA
+if "cliente_selecionado_gatilho" not in st.session_state:
+    st.session_state["cliente_selecionado_gatilho"] = "Selecione..."
+
 with col_left:
     st.subheader("🚀 Modo de Ataque (Vendas)")
     if not df_filtrado.empty:
         df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
         opcoes = sorted(df_filtrado['label_select'].tolist())
-        selecionado = st.selectbox("Busque Cliente (Filtrado):", ["Selecione..."] + opcoes)
+        
+        # Tenta definir o índice baseado no gatilho da tabela
+        try:
+            index_padrao = (["Selecione..."] + opcoes).index(st.session_state["cliente_selecionado_gatilho"])
+        except ValueError:
+            index_padrao = 0
+
+        selecionado = st.selectbox(
+            "Busque Cliente (Filtrado):", 
+            ["Selecione..."] + opcoes, 
+            index=index_padrao,
+            key="sb_principal" # Key para não conflitar
+        )
 
         if selecionado and selecionado != "Selecione...":
             cli = df_filtrado[df_filtrado['label_select'] == selecionado].iloc[0]
@@ -450,6 +466,7 @@ with col_right:
             st.success("✅ Nenhum cadastro pendente nos filtros selecionados!")
         else:
             df_pend['lbl'] = df_pend['razao_social'] + " (Pendente)"
+            # Tenta sincronizar atualização também se possível, mas mantendo simples
             sel_up = st.selectbox("Atualizar:", ["Selecione..."] + sorted(df_pend['lbl'].tolist()))
             
             if sel_up and sel_up != "Selecione...":
@@ -474,6 +491,7 @@ with c_list1:
     st.subheader("📋 Lista Geral (Editável)")
 
 todas_colunas = list(df.columns)
+# Remove ID da lista padrão de exibição
 colunas_padrao = [c for c in ['pj_id', 'razao_social', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'GAP (dias)', 'tentativa_1', 'tentativa_2', 'tentativa_3', 'telefone_1'] if c in todas_colunas]
 
 colunas_selecionadas = st.multiselect(
@@ -489,17 +507,34 @@ if not df_filtrado.empty:
         "Categoria_Cliente": st.column_config.TextColumn("Status", disabled=True),
         "Ultima_Compra": st.column_config.TextColumn("Ult. Compra", disabled=True),
         "GAP (dias)": st.column_config.NumberColumn("GAP (dias)", disabled=True),
-        "id": st.column_config.TextColumn("ID Sistema", disabled=True),
+        "id": None, # <--- Oculta o ID totalmente da visão
+        "Ação": st.column_config.CheckboxColumn("➡️ Abrir", help="Clique para abrir os dados deste cliente lá em cima", default=False)
     }
 
+    # Adiciona a coluna de botão/ação no inicio
+    df_filtrado.insert(0, "Ação", False)
+
+    # Exibe editor
     edicoes = st.data_editor(
-        df_filtrado[colunas_selecionadas + ['id']], 
+        df_filtrado[["Ação"] + colunas_selecionadas + ['id']], 
         key="editor_dados",
         hide_index=True,
         column_config=config_cols,
         use_container_width=True,
         num_rows="fixed"
     )
+
+    # --- LÓGICA DO CLIQUE NA AÇÃO (BOTÃO) ---
+    if "editor_dados" in st.session_state:
+        mudancas = st.session_state["editor_dados"]["edited_rows"]
+        for idx, val in mudancas.items():
+            if "Ação" in val and val["Ação"] == True:
+                # O usuário clicou no checkbox "Ação"
+                try:
+                    cliente_alvo = df_filtrado.iloc[idx]['label_select']
+                    st.session_state["cliente_selecionado_gatilho"] = cliente_alvo
+                    st.rerun() # Recarrega a página para atualizar o card lá em cima
+                except: pass
 
     with c_list2:
         st.write("") 
@@ -515,17 +550,18 @@ if not df_filtrado.empty:
                 idx = 0
 
                 for i, mudancas in alteracoes.items():
-                    try:
-                        id_cliente = df_filtrado.iloc[i]['id']
-                        dados_limpos = {k: v for k, v in mudancas.items() if k not in ['GAP (dias)', 'Ultima_Compra', 'Categoria_Cliente', 'label_select', 'data_temp', 'dias_sem_compra', 'pendente']}
-                        
-                        if dados_limpos:
+                    # Pula se for só o clique do botão Ação
+                    dados_limpos = {k: v for k, v in mudancas.items() if k not in ['GAP (dias)', 'Ultima_Compra', 'Categoria_Cliente', 'label_select', 'data_temp', 'dias_sem_compra', 'pendente', 'Ação']}
+                    
+                    if dados_limpos:
+                        try:
+                            id_cliente = df_filtrado.iloc[i]['id']
                             if atualizar_cliente_directus(token, id_cliente, dados_limpos):
                                 sucessos += 1
                             else:
                                 erros += 1
-                    except Exception as e:
-                        erros += 1
+                        except Exception as e:
+                            erros += 1
                     
                     idx += 1
                     progresso.progress(idx / total)
@@ -534,11 +570,12 @@ if not df_filtrado.empty:
                 progresso.empty()
                 
                 if erros == 0:
-                    st.success(f"✅ {sucessos} registros atualizados com sucesso!")
-                    time.sleep(1)
-                    st.rerun() 
+                    if sucessos > 0:
+                        st.success(f"✅ {sucessos} registros atualizados com sucesso!")
+                        time.sleep(1)
+                        st.rerun() 
                 else:
-                    st.warning(f"⚠️ {sucessos} salvos, mas {erros} falharam. (Provavelmente a coluna não existe no Directus ainda).")
+                    st.warning(f"⚠️ {sucessos} salvos, mas {erros} falharam.")
             else:
                 st.info("Nenhuma alteração detectada para salvar.")
 else:
