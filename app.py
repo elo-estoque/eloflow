@@ -59,7 +59,7 @@ st.markdown("""
 
 # --- 3. VARIÁVEIS DE AMBIENTE ---
 # Se não estiverem no .env, use os valores padrão (ajuste se necessário)
-DIRECTUS_URL = os.getenv("DIRECTUS_URL", "https://elo-operaes-elo-operaes-directus-sotkfd-93c3dc-152-53-165-62.traefik.me") 
+DIRECTUS_URL = os.getenv("DIRECTUS_URL", "http://152.53.165.62:8055") 
 # Coloque sua chave do Google AI Studio aqui se não usar variável de ambiente
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") 
 
