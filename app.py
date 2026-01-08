@@ -360,27 +360,24 @@ st.divider()
 
 col_left, col_right = st.columns([1, 1], gap="large")
 
-# GESTÃO DO GATILHO DA TABELA
-if "cliente_selecionado_gatilho" not in st.session_state:
-    st.session_state["cliente_selecionado_gatilho"] = "Selecione..."
-
 with col_left:
     st.subheader("🚀 Modo de Ataque (Vendas)")
     if not df_filtrado.empty:
         df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
         opcoes = sorted(df_filtrado['label_select'].tolist())
         
-        # Tenta definir o índice baseado no gatilho da tabela
-        try:
-            index_padrao = (["Selecione..."] + opcoes).index(st.session_state["cliente_selecionado_gatilho"])
-        except ValueError:
-            index_padrao = 0
+        # --- CORREÇÃO DO SELECTBOX: AGORA ELE OBEDECE AO SESSION STATE ---
+        if "sb_principal" not in st.session_state:
+            st.session_state["sb_principal"] = "Selecione..."
+        
+        # Garante que o valor no session state é válido para a lista atual
+        if st.session_state["sb_principal"] not in (["Selecione..."] + opcoes):
+             st.session_state["sb_principal"] = "Selecione..."
 
         selecionado = st.selectbox(
             "Busque Cliente (Filtrado):", 
             ["Selecione..."] + opcoes, 
-            index=index_padrao,
-            key="sb_principal" # Key para não conflitar
+            key="sb_principal" 
         )
 
         if selecionado and selecionado != "Selecione...":
@@ -532,8 +529,9 @@ if not df_filtrado.empty:
                 # O usuário clicou no checkbox "Ação"
                 try:
                     cliente_alvo = df_filtrado.iloc[idx]['label_select']
-                    st.session_state["cliente_selecionado_gatilho"] = cliente_alvo
-                    st.rerun() # Recarrega a página para atualizar o card lá em cima
+                    # AQUI ESTÁ O PULO DO GATO: Atualiza diretamente a chave do Selectbox
+                    st.session_state["sb_principal"] = cliente_alvo
+                    st.rerun() 
                 except: pass
 
     with c_list2:
