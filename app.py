@@ -74,7 +74,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. VARIÁVEIS DE AMBIENTE ---
-# Atualizei para o seu link do print
 DIRECTUS_URL = os.getenv("DIRECTUS_URL", "https://elo-flow-eloflowdirectus-a9lluh-7f4d22-152-53-165-62.traefik.me")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") 
 
@@ -117,7 +116,6 @@ def gerar_sugestoes_fixas(area_atuacao):
 def login_directus_debug(email, password):
     base_url = DIRECTUS_URL.rstrip('/')
     try:
-        # verify=False IGNORA O ERRO DE CERTIFICADO
         response = requests.post(
             f"{base_url}/auth/login", 
             json={"email": email, "password": password}, 
@@ -134,7 +132,6 @@ def login_directus_debug(email, password):
     
     if response.status_code == 200:
         token = response.json()['data']['access_token']
-        # Tenta pegar perfil
         try:
             user_resp = requests.get(
                 f"{base_url}/users/me", 
@@ -149,7 +146,7 @@ def login_directus_debug(email, password):
                 return None, None
         except:
             pass
-        return token, {} # Retorna token mesmo se falhar perfil (MVP)
+        return token, {} 
     
     st.error(f"❌ Erro: {response.text}")
     return None, None
@@ -158,21 +155,22 @@ def carregar_clientes(token):
     try:
         base_url = DIRECTUS_URL.rstrip('/')
         headers = {"Authorization": f"Bearer {token}"}
-        # Puxa tudo que precisa para o Card
-        fields = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj"
+        # IMPORTANTE: Adicionei campos de tentativa na query
+        # Se esses campos não existirem no Directus ainda, o código vai funcionar mas eles virão vazios ou ignorados
+        fields = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,tentativa_1,tentativa_2,tentativa_3"
         url = f"{base_url}/items/clientes?limit=-1&fields={fields}"
         
         r = requests.get(url, headers=headers, timeout=10, verify=False)
         if r.status_code == 200:
             df = pd.DataFrame(r.json()['data'])
             if not df.empty:
-                # Processamento de Dados (Para igualar ao app antigo)
+                # Processamento de Datas
                 df['data_temp'] = pd.to_datetime(df['data_ultima_compra'], errors='coerce')
                 df['Ultima_Compra'] = df['data_temp'].dt.strftime('%d/%m/%Y').fillna("-")
                 hoje = pd.Timestamp.now()
                 df['dias_sem_compra'] = (hoje - df['data_temp']).dt.days.fillna(9999).astype(int)
                 
-                # Categoria Calculada (Atualizada para incluir Crítico)
+                # Categoria Calculada
                 def definir_cat(row):
                     if 'status_carteira' in row and row['status_carteira']: return row['status_carteira']
                     dias = row['dias_sem_compra']
@@ -182,16 +180,35 @@ def carregar_clientes(token):
                 
                 df['Categoria_Cliente'] = df.apply(definir_cat, axis=1)
                 
-                # ADICIONANDO AS COLUNAS NOVAS SOLICITADAS
+                # ADICIONANDO AS COLUNAS NOVAS
                 df['GAP (dias)'] = df['dias_sem_compra']
-                df['Tentativa 1'] = "-"
-                df['Tentativa 2'] = "-"
-                df['Tentativa 3'] = "-"
+                
+                # Garante que as colunas de tentativa existam no DF mesmo se vierem None do banco
+                for col in ['tentativa_1', 'tentativa_2', 'tentativa_3']:
+                    if col not in df.columns:
+                        df[col] = "" # String vazia para edição
+                    else:
+                        df[col] = df[col].fillna("") # Remove NaN para edição limpa
                 
                 return df
         return pd.DataFrame()
     except:
         return pd.DataFrame()
+
+def atualizar_cliente_directus(token, id_cliente, dados_atualizados):
+    """Função para salvar alterações de volta no Directus"""
+    base_url = DIRECTUS_URL.rstrip('/')
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        r = requests.patch(
+            f"{base_url}/items/clientes/{id_cliente}",
+            json=dados_atualizados,
+            headers=headers,
+            verify=False
+        )
+        return r.status_code == 200
+    except:
+        return False
 
 def carregar_campanha_ativa(token):
     try:
@@ -278,7 +295,6 @@ if 'token' not in st.session_state:
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         st.markdown("<br><h1 style='text-align:center; color:#E31937'>🦅 NeuroSales CRM</h1>", unsafe_allow_html=True)
-        # st.caption(f"Conectado: {DIRECTUS_URL}") # Comentei pra ficar mais limpo
         email = st.text_input("E-mail")
         senha = st.text_input("Senha", type="password")
         if st.button("ENTRAR", use_container_width=True):
@@ -331,7 +347,7 @@ k3.markdown(f"<div class='metric-card'><h3>Campanha</h3><h4>{campanha['nome_camp
 st.markdown("### 🔍 Filtros Globais")
 c_f1, c_f2 = st.columns(2)
 with c_f1:
-    # Filtro de Status (Ativos, Inativos, Críticos)
+    # Filtro de Status
     opcoes_status = sorted(list(df['Categoria_Cliente'].unique()))
     filtro_status = st.multiselect("Filtrar por Status (Carteira):", options=opcoes_status, default=opcoes_status)
 
@@ -352,11 +368,10 @@ st.divider()
 # --- MODO ATAQUE vs ATUALIZAÇÃO ---
 col_left, col_right = st.columns([1, 1], gap="large")
 
-# === COLUNA ESQUERDA: ATAQUE (VISUAL DO APP ANTIGO) ===
+# === COLUNA ESQUERDA: ATAQUE ===
 with col_left:
     st.subheader("🚀 Modo de Ataque (Vendas)")
     
-    # Prepara Dropdown COM BASE NO FILTRO
     if not df_filtrado.empty:
         df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
         opcoes = sorted(df_filtrado['label_select'].tolist())
@@ -365,21 +380,16 @@ with col_left:
         if selecionado and selecionado != "Selecione...":
             cli = df_filtrado[df_filtrado['label_select'] == selecionado].iloc[0]
             
-            # Dados para o Card
             dias = cli['dias_sem_compra']
             area_cli = str(cli['area_atuacao'])
             tel_raw = str(cli['telefone_1'])
             email_cli = str(cli['email_1'])
-            obs_cli = str(cli.get('obs_gerais', ''))
             tel_clean = limpar_telefone(tel_raw)
             
-            # Sugestões e Scripts (Lógica do App Antigo)
             sugestoes, motivo_sugestao = gerar_sugestoes_fixas(area_cli)
             html_sugestoes = "".join([f"<div class='sku-item'>{s}</div>" for s in sugestoes])
-            
             script_msg = f"Olá! Sou da Elo Brindes. Vi que sua última compra foi há {dias} dias. Temos novidades para {area_cli}."
             
-            # HTML DO CARD (O visual que você gosta)
             html_card = f"""
             <div class="foco-card">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -406,7 +416,6 @@ with col_left:
             """
             st.markdown(html_card, unsafe_allow_html=True)
             
-            # Botões de Ação
             b1, b2, b3 = st.columns(3)
             with b1:
                 if tel_clean and len(tel_clean) >= 10:
@@ -417,7 +426,6 @@ with col_left:
                     link_gmail = f"https://mail.google.com/mail/?view=cm&fs=1&to={email_cli}&su=Contato Elo&body={script_msg}"
                     st.link_button("📧 Gmail", link_gmail, use_container_width=True)
             with b3:
-                # BOTÃO NOVO: GERAR COM IA DENTRO DO CARD
                 if st.button("✨ IA Magica", use_container_width=True):
                     if not GEMINI_API_KEY:
                         st.error("Sem Chave IA")
@@ -425,7 +433,6 @@ with col_left:
                         subj, body = gerar_email_ia(cli['razao_social'], area_cli, cli['Ultima_Compra'], campanha)
                         st.session_state['ia_result'] = {'subj': subj, 'body': body, 'email': email_cli}
             
-            # Mostra resultado da IA se gerado
             if 'ia_result' in st.session_state:
                 res = st.session_state['ia_result']
                 st.info(f"Assunto: {res['subj']}")
@@ -439,11 +446,10 @@ with col_left:
     else:
         st.info("Nenhum cliente encontrado com os filtros atuais.")
 
-# === COLUNA DIREITA: ATUALIZAÇÃO (PENDENTES) ===
+# === COLUNA DIREITA: ATUALIZAÇÃO ===
 with col_right:
     st.subheader("📝 Modo Atualização")
     
-    # Filtra quem tem erro de cadastro (usando o DF FILTRADO)
     def checar_pendencia(row):
         t = limpar_telefone(row['telefone_1'])
         e = str(row['email_1'])
@@ -463,8 +469,6 @@ with col_right:
             
             if sel_up and sel_up != "Selecione...":
                 cli_up = df_pend[df_pend['lbl'] == sel_up].iloc[0]
-                
-                # HTML Card Atualização
                 st.markdown(f"""
                 <div class="foco-card" style="border-left: 6px solid #FFD700;">
                     <h3 style='color:#FFD700'>⚠️ Dados Faltantes</h3>
@@ -474,30 +478,102 @@ with col_right:
                         <div class="foco-item" style="color:#FFD700"><b>Tel</b> {cli_up['telefone_1'] or 'VAZIO'}</div>
                         <div class="foco-item" style="color:#FFD700"><b>Email</b> {cli_up['email_1'] or 'VAZIO'}</div>
                     </div>
-                    <div class="script-box" style="border-left: 4px solid #FFD700;">
-                        🗣️ "Olá! Preciso atualizar o cadastro da {cli_up['razao_social']} para enviar o catálogo 2025."
-                    </div>
                 </div>
                 """, unsafe_allow_html=True)
     else:
         st.write("Sem dados.")
 
-# --- LISTA GERAL EMBAIXO ---
+# --- LISTA GERAL EMBAIXO (AGORA EDITÁVEL E SALVÁVEL) ---
 st.divider()
-st.subheader("📋 Lista Geral (Customizável)")
+c_list1, c_list2 = st.columns([4, 1])
+with c_list1:
+    st.subheader("📋 Lista Geral (Editável)")
 
 # Seletor de colunas
 todas_colunas = list(df.columns)
-# Define colunas padrão interessantes
-colunas_padrao = [c for c in ['pj_id', 'razao_social', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'GAP (dias)', 'Tentativa 1', 'telefone_1'] if c in todas_colunas]
+# Mapeamento do nome amigável para o nome real no DF
+colunas_padrao = [c for c in ['pj_id', 'razao_social', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'GAP (dias)', 'tentativa_1', 'tentativa_2', 'tentativa_3', 'telefone_1'] if c in todas_colunas]
 
 colunas_selecionadas = st.multiselect(
-    "Selecione as colunas para exibir:",
+    "Selecione as colunas para exibir/editar:",
     options=todas_colunas,
     default=colunas_padrao
 )
 
 if not df_filtrado.empty:
-    st.dataframe(df_filtrado[colunas_selecionadas], use_container_width=True)
+    # Mostra o ID para referência interna mas pode ocultar se preferir. 
+    # O importante é que a edição funciona via chave 'editor_dados'
+    
+    # CONFIGURAÇÃO DE COLUNAS: Bloqueia campos calculados para o usuário não perder tempo tentando editar
+    config_cols = {
+        "pj_id": st.column_config.TextColumn("ID Loja", disabled=True),
+        "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
+        "Categoria_Cliente": st.column_config.TextColumn("Status", disabled=True),
+        "Ultima_Compra": st.column_config.TextColumn("Ult. Compra", disabled=True),
+        "GAP (dias)": st.column_config.NumberColumn("GAP (dias)", disabled=True),
+        "id": st.column_config.TextColumn("ID Sistema", disabled=True), # Bloqueia ID do Directus
+        # Campos de tentativa ficam liberados (padrão)
+    }
+
+    # DATA EDITOR: Permite edição na tela
+    edicoes = st.data_editor(
+        df_filtrado[colunas_selecionadas + ['id']], # Inclui ID escondido ou no fim para garantir que temos a chave
+        key="editor_dados",
+        hide_index=True,
+        column_config=config_cols,
+        use_container_width=True,
+        num_rows="fixed"
+    )
+
+    # LÓGICA DE SALVAMENTO (WRITE-BACK)
+    with c_list2:
+        st.write("") # Espaço
+        st.write("") 
+        if st.button("💾 Salvar Alterações", type="primary", use_container_width=True):
+            if "editor_dados" in st.session_state and st.session_state["editor_dados"]["edited_rows"]:
+                alteracoes = st.session_state["editor_dados"]["edited_rows"]
+                sucessos = 0
+                erros = 0
+                
+                # Barra de progresso visual
+                progresso = st.progress(0)
+                total = len(alteracoes)
+                idx = 0
+
+                for i, mudancas in alteracoes.items():
+                    # Recupera o ID real do cliente baseado no índice do dataframe filtrado
+                    # O 'i' aqui é o índice da linha no df exibido
+                    try:
+                        # Precisamos pegar o ID do registro original. 
+                        # O data_editor mantém o índice original do dataframe passado
+                        id_cliente = df_filtrado.iloc[i]['id']
+                        
+                        # Remove colunas que não existem no banco (calculadas) para não dar erro
+                        dados_limpos = {k: v for k, v in mudancas.items() if k not in ['GAP (dias)', 'Ultima_Compra', 'Categoria_Cliente', 'label_select', 'data_temp', 'dias_sem_compra', 'pendente']}
+                        
+                        if dados_limpos:
+                            if atualizar_cliente_directus(token, id_cliente, dados_limpos):
+                                sucessos += 1
+                            else:
+                                erros += 1
+                    except Exception as e:
+                        erros += 1
+                        print(f"Erro ao salvar linha {i}: {e}")
+                    
+                    idx += 1
+                    progresso.progress(idx / total)
+                
+                time.sleep(0.5)
+                progresso.empty()
+                
+                if erros == 0:
+                    st.success(f"✅ {sucessos} registros atualizados com sucesso!")
+                    time.sleep(1)
+                    st.rerun() # Recarrega para puxar dados frescos do banco
+                else:
+                    st.warning(f"⚠️ {sucessos} salvos, mas {erros} falharam. Verifique se as colunas (tentativa_1, etc) existem no Directus.")
+            else:
+                st.info("Nenhuma alteração detectada para salvar.")
+
 else:
     st.write("Nenhum dado para exibir com os filtros atuais.")
