@@ -5,510 +5,429 @@ import google.generativeai as genai
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, date
+from datetime import datetime
 import time
 import os
 import random
-import urllib.parse
 import warnings
-import urllib3
 
-# --- 1. CONFIGURAÇÕES E ESTADO (A Lógica de Ponte vem PRIMEIRO) ---
+# --- 1. CONFIGURAÇÕES INICIAIS E SILENCIAMENTO DE AVISOS ---
 st.set_page_config(page_title="NeuroSales CRM", layout="wide", page_icon="🦅")
 
-# Ponte de Estado (Isso faz o clique na tabela abrir o card lá em cima)
-if 'pending_client_select' in st.session_state:
-    st.session_state['sel_ataque'] = st.session_state['pending_client_select']
-    del st.session_state['pending_client_select']
-
-if 'pending_update_select' in st.session_state:
-    st.session_state['sel_update'] = st.session_state['pending_update_select']
-    del st.session_state['pending_update_select']
-
-# Silenciar avisos de segurança (Necessário para o Traefik interno)
+# Ignora avisos chatos do Pandas e Streamlit
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 os.environ["STREAMLIT_CLIENT_SHOW_ERROR_DETAILS"] = "false"
 
-# --- 2. CSS VISUAL RICO (Do App Antigo + Dark Mode) ---
+# --- 2. CSS PERSONALIZADO (DARK MODE & ELO BRAND) ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+    /* Fundo e Texto Geral */
+    .stApp { background-color: #050505; color: #E5E7EB; }
     
-    .stApp { background-color: #050505; color: #E5E7EB; font-family: 'Inter', sans-serif; }
-    
-    /* Sidebar */
-    section[data-testid="stSidebar"] { background-color: #111; border-right: 1px solid #333; }
-
     /* Botões */
-    div.stButton > button { background-color: #E31937; color: white; border: none; border-radius: 6px; font-weight: bold; }
-    div.stButton > button:hover { background-color: #C2132F; border-color: #C2132F; }
+    div.stButton > button { 
+        background-color: #E31937; 
+        color: white; 
+        border: none; 
+        border-radius: 6px; 
+        font-weight: bold;
+    }
+    div.stButton > button:hover { 
+        background-color: #C2132F; 
+        border-color: #C2132F;
+    }
     
     /* Cards de Métricas */
     .metric-card {
-        background-color: #151515; border: 1px solid #333; padding: 15px; 
-        border-radius: 8px; border-left: 4px solid #E31937; margin-bottom: 10px;
+        background-color: #151515; 
+        border: 1px solid #333; 
+        padding: 15px; 
+        border-radius: 8px; 
+        border-left: 4px solid #E31937;
+        margin-bottom: 10px;
     }
-    .metric-card h3 { color: #888; font-size: 14px; margin: 0; }
-    .metric-card h1 { color: #FFF; margin: 5px 0 0 0; }
+    .metric-card h3 { font-size: 14px; color: #888; margin: 0; }
+    .metric-card h1 { font-size: 28px; color: #FFF; margin: 5px 0 0 0; }
+    .metric-card h4 { font-size: 18px; color: #EEE; margin: 5px 0 0 0; }
     
-    /* CARDS DE FOCO (Visual Antigo) */
-    .foco-card {
-        background-color: #151515 !important; padding: 20px; border-radius: 12px;
-        border: 1px solid #333; border-left: 6px solid #E31937; margin-bottom: 20px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-    }
-    .foco-grid { display: flex; flex-direction: column; gap: 10px; margin-top: 15px; font-size: 14px; }
-    .foco-item {
-        background-color: #252525 !important; color: #FFFFFF !important; padding: 10px 14px;
-        border-radius: 6px; border: 1px solid #3a3a3a; display: flex; justify-content: space-between;
-    }
-    .foco-item b { color: #E31937 !important; margin-right: 10px; min-width: 80px; text-transform: uppercase; font-size: 11px; }
-    
-    /* Sugestões e Scripts */
-    .script-box {
-        background-color: #2A1015 !important; padding: 12px; border-radius: 8px; margin-top: 15px;
-        border: 1px solid #333; border-left: 4px solid #E31937; color: #E0E0E0 !important; font-style: italic; font-size: 13px;
-    }
-    .sugestao-box {
-        background-color: #2D2006 !important; border: 1px solid #B45309; border-radius: 8px;
-        padding: 12px; margin-top: 15px;
-    }
-    .sugestao-title { color: #FBBF24 !important; font-weight: bold; font-size: 14px; margin-bottom: 8px; }
-    .sku-item {
-        background-color: rgba(251, 191, 36, 0.15); color: #FCD34D !important;
-        padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; font-size: 13px;
-        border: 1px solid rgba(251, 191, 36, 0.2);
-    }
+    /* Inputs e Tabelas */
+    .stTextInput > div > div > input { background-color: #1A1A1A; color: white; border-color: #333; }
+    section[data-testid="stSidebar"] { background-color: #111; border-right: 1px solid #333; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- 3. VARIÁVEIS DE AMBIENTE ---
-DIRECTUS_URL = os.getenv("DIRECTUS_URL", "https://elo-flow-eloflowdirectus-a9lluh-7f4d22-152-53-165-62.traefik.me")
+# Se não estiverem no .env, use os valores padrão (ajuste se necessário)
+DIRECTUS_URL = os.getenv("DIRECTUS_URL", "https://elo-operaes-elo-operaes-directus-sotkfd-93c3dc-152-53-165-62.traefik.me") 
+# Coloque sua chave do Google AI Studio aqui se não usar variável de ambiente
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") 
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # =========================================================
-#  FUNÇÕES AUXILIARES (LÓGICA DE NEGÓCIO ANTIGA)
+#  FUNÇÕES DE BACKEND (API DIRECTUS)
 # =========================================================
 
-def limpar_telefone(phone):
-    if pd.isna(phone): return None
-    return "".join(filter(str.isdigit, str(phone)))
-
-def gerar_sugestoes_janeiro(area_atuacao):
-    """
-    Motor de sugestão baseado em regras de Janeiro (Do app antigo)
-    """
-    area_upper = str(area_atuacao).upper()
-    keywords = []
-    motivo = "Mix Geral"
-
-    # Regras Manuais (Simulando o CSV de produtos)
-    if any(x in area_upper for x in ['EDUCACIONAL', 'ESCOLA', 'CURSO']):
-        keywords = ['📦 Papel Sulfite A4', '📦 Canetas Esferográficas', '📦 Marcadores de Quadro', '📦 Cadernos 2026']
-        motivo = "Volta às Aulas (Sazonalidade Janeiro)"
-    elif any(x in area_upper for x in ['SAUDE', 'HOSPITAL', 'CLINICA']):
-        keywords = ['📦 Luvas Descartáveis', '📦 Papel Toalha', '📦 Álcool 70%', '📦 Copos Descartáveis']
-        motivo = "Higiene e Descartáveis (Recorrente)"
-    elif any(x in area_upper for x in ['INDUSTRIA', 'FABRICA', 'LOGISTICA']):
-        keywords = ['📦 Fita Adesiva', '📦 Filme Stretch', '📦 Luvas EPI', '📦 Estiletes Profissionais']
-        motivo = "Expedição e Segurança"
-    else:
-        keywords = ['📦 Kit Café Corporativo', '📦 Material de Escritório', '📦 Produtos de Limpeza']
-        motivo = "Uso Geral / Corporativo"
-    
-    return keywords, motivo
-
-# =========================================================
-#  FUNÇÕES DE BACKEND (CONEXÃO DIRECTUS + LOGIN SEGURO)
-# =========================================================
-
-def login_directus_debug(email, password):
-    base_url = DIRECTUS_URL.rstrip('/')
+def login_directus(email, password):
+    """Autentica o vendedor e retorna o Token JWT + Dados do Usuário"""
     try:
-        # verify=False é CRÍTICO para seu servidor
-        response = requests.post(
-            f"{base_url}/auth/login", 
-            json={"email": email, "password": password}, 
-            timeout=15, 
-            verify=False 
-        )
-    except Exception as e:
-        st.error(f"❌ Erro de Conexão: {e}")
-        return None, None
-
-    if response.status_code == 401:
-        st.error("🔒 E-mail ou Senha incorretos.")
-        return None, None
-    
-    if response.status_code == 200:
-        token = response.json()['data']['access_token']
-        try:
-            # Tenta pegar nome do usuário
-            user_resp = requests.get(
-                f"{base_url}/users/me", 
-                headers={"Authorization": f"Bearer {token}"}, 
-                timeout=10, 
-                verify=False
-            )
-            if user_resp.status_code == 200:
-                return token, user_resp.json()['data']
-        except:
-            pass
-        return token, {}
-    
-    st.error(f"❌ Erro inesperado: {response.text}")
-    return None, None
-
-def carregar_clientes_api(token):
-    try:
-        base_url = DIRECTUS_URL.rstrip('/')
-        headers = {"Authorization": f"Bearer {token}"}
-        # Pede campos extras para o DataEditor funcionar igual ao antigo
-        fields = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj"
-        url = f"{base_url}/items/clientes?limit=-1&fields={fields}"
+        url = f"{DIRECTUS_URL}/auth/login"
+        payload = {"email": email, "password": password}
+        response = requests.post(url, json=payload, timeout=10)
         
-        r = requests.get(url, headers=headers, timeout=10, verify=False)
-        if r.status_code == 200:
-            df = pd.DataFrame(r.json()['data'])
-            if not df.empty:
-                # --- ENGENHARIA DE DADOS (RECRIANDO COLUNAS DO APP ANTIGO) ---
-                
-                # 1. Datas e Dias sem Compra
-                df['data_temp'] = pd.to_datetime(df['data_ultima_compra'], errors='coerce')
-                df['Ultima_Compra'] = df['data_temp'].dt.strftime('%d/%m/%Y').fillna("-")
-                hoje = pd.Timestamp.now()
-                df['dias_sem_compra'] = (hoje - df['data_temp']).dt.days.fillna(9999).astype(int)
-                
-                # 2. Status e Categoria
-                def definir_cat(row):
-                    if row['status_carteira']: return row['status_carteira']
-                    if row['dias_sem_compra'] > 180: return "Inativo"
-                    return "Ativo"
-                df['Categoria_Cliente'] = df.apply(definir_cat, axis=1)
-                
-                # 3. Colunas VAZIAS necessárias para o DataEditor não quebrar
-                cols_extras = ['gap_1_2', 'gap_2_3', 'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']
-                for c in cols_extras:
-                    df[c] = None 
-                
-                # 4. Ajustes de Texto
-                df['obs'] = df['obs_gerais'].fillna('')
-                df['area_atuacao_nome'] = df['area_atuacao'].fillna('Geral')
-                
-                return df
-        return pd.DataFrame()
-    except:
+        if response.status_code == 200:
+            data = response.json()['data']
+            # Pega dados do usuário logado
+            user_resp = requests.get(f"{DIRECTUS_URL}/users/me", headers={"Authorization": f"Bearer {data['access_token']}"}, timeout=10)
+            if user_resp.status_code == 200:
+                user_data = user_resp.json()['data']
+                return data['access_token'], user_data
+        return None, None
+    except Exception as e:
+        st.error(f"Erro de conexão com servidor: {e}")
+        return None, None
+
+def carregar_clientes(token):
+    """Busca clientes do Directus."""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        # Busca campos essenciais
+        fields = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais"
+        url = f"{DIRECTUS_URL}/items/clientes?limit=-1&fields={fields}"
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            data = response.json()['data']
+            if not data: return pd.DataFrame()
+            return pd.DataFrame(data)
+        else:
+            st.warning("Não foi possível carregar a lista de clientes.")
+            return pd.DataFrame()
+    except Exception:
         return pd.DataFrame()
 
 def carregar_campanha_ativa(token):
+    """Busca a campanha de vendas ativa"""
     try:
-        base_url = DIRECTUS_URL.rstrip('/')
-        r = requests.get(
-            f"{base_url}/items/campanhas_vendas?filter[ativa][_eq]=true&limit=1", 
-            headers={"Authorization": f"Bearer {token}"}, 
-            verify=False
-        )
-        if r.status_code == 200 and r.json()['data']:
-            return r.json()['data'][0]
-    except: pass
+        headers = {"Authorization": f"Bearer {token}"}
+        url = f"{DIRECTUS_URL}/items/campanhas_vendas?filter[ativa][_eq]=true&limit=1"
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200 and response.json()['data']:
+            return response.json()['data'][0]
+    except:
+        pass
     return None
 
-def config_smtp_crud(token, payload=None):
-    base_url = DIRECTUS_URL.rstrip('/')
+def salvar_config_smtp(token, host, port, user, password, assinatura):
+    """Salva as credenciais SMTP"""
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    url = f"{base_url}/items/config_smtp"
     
-    if payload:
-        check = requests.get(url, headers=headers, verify=False)
-        if check.status_code == 200 and len(check.json()['data']) > 0:
-            requests.patch(f"{url}/{check.json()['data'][0]['id']}", json=payload, headers=headers, verify=False)
-        else:
-            requests.post(url, json=payload, headers=headers, verify=False)
-        return True
+    # Verifica se já existe
+    check = requests.get(f"{DIRECTUS_URL}/items/config_smtp", headers=headers, timeout=10)
+    
+    payload = {
+        "smtp_host": host,
+        "smtp_port": int(port),
+        "smtp_user": user,
+        "smtp_pass_app": password,
+        "assinatura_html": assinatura
+    }
+    
+    if check.status_code == 200 and len(check.json()['data']) > 0:
+        item_id = check.json()['data'][0]['id']
+        requests.patch(f"{DIRECTUS_URL}/items/config_smtp/{item_id}", json=payload, headers=headers)
     else:
-        r = requests.get(url, headers=headers, verify=False)
-        if r.status_code == 200 and r.json()['data']: return r.json()['data'][0]
-        return None
+        requests.post(f"{DIRECTUS_URL}/items/config_smtp", json=payload, headers=headers)
 
-def registrar_log(token, pj_id, assunto, corpo, status):
+def pegar_config_smtp(token):
     try:
-        base_url = DIRECTUS_URL.rstrip('/')
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        payload = {
-            "cliente_pj_id": str(pj_id), "assunto_gerado": assunto, "corpo_email": corpo, 
-            "status_envio": status, "data_envio": datetime.now().isoformat()
-        }
-        requests.post(f"{base_url}/items/historico_envios", json=payload, headers=headers, verify=False)
-    except: pass
-
-def salvar_alteracao_simples(token, cliente_id, nova_obs, novo_status):
-    """Salva apenas OBS e Status no Directus (Função simplificada de write-back)"""
-    try:
-        base_url = DIRECTUS_URL.rstrip('/')
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        payload = {"obs_gerais": nova_obs, "status_carteira": novo_status}
-        requests.patch(f"{base_url}/items/clientes/{cliente_id}", json=payload, headers=headers, verify=False)
-        return True
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = requests.get(f"{DIRECTUS_URL}/items/config_smtp", headers=headers, timeout=10)
+        if resp.status_code == 200 and resp.json()['data']:
+            return resp.json()['data'][0]
     except:
-        return False
+        return None
+    return None
+
+def registrar_log_envio(token, cliente_pj_id, assunto, corpo, status):
+    """Registra no Directus o envio"""
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {
+        "cliente_pj_id": str(cliente_pj_id),
+        "assunto_gerado": assunto,
+        "corpo_email": corpo,
+        "status_envio": status,
+        "data_envio": datetime.now().isoformat()
+    }
+    requests.post(f"{DIRECTUS_URL}/items/historico_envios", json=payload, headers=headers)
 
 # =========================================================
-#  IA & SMTP
+#  IA GENERATIVA (GEMINI)
 # =========================================================
-
-def gerar_email_ia(cliente, ramo, data_compra, campanha):
-    if not GEMINI_API_KEY: return "Erro IA", "Sem Chave API configurada"
-    camp_nome = campanha.get('nome_campanha', 'Retomada') if campanha else 'Contato'
+def gerar_email_ia(cliente_nome, ramo, data_compra, campanha_obj):
+    if not GEMINI_API_KEY:
+        return "Erro: Configure a Chave da IA", "A chave GEMINI_API_KEY não foi encontrada."
+    
+    campanha_nome = campanha_obj.get('nome_campanha', 'Retomada de Contato') if campanha_obj else "Contato Geral"
+    campanha_instrucao = campanha_obj.get('prompt_instrucao', 'Ofereça o portfólio completo.') if campanha_obj else "Ofereça produtos gerais."
+    
     prompt = f"""
-    Aja como vendedor da Elo Brindes. Email para {cliente} ({ramo}).
-    Ultima compra: {data_compra}. Campanha: {camp_nome}.
-    Objetivo: Reativar ou Vender.
-    Saída Obrigatória: ASSUNTO|CORPO_HTML
+    Aja como um vendedor B2B da Elo Brindes. Escreva um e-mail curto (máx 120 palavras).
+    
+    Cliente: {cliente_nome} ({ramo})
+    Última Compra: {data_compra if data_compra else 'Não informado'}
+    Campanha Atual: {campanha_nome}
+    Instrução de Venda: {campanha_instrucao}
+    
+    Regras:
+    1. Assunto: Curto e intrigante (sem "Venda" ou "Promoção").
+    2. Corpo: HTML simples (<p>, <b>, <br>). Sem saudação genérica.
+    3. Foco: Retomar relacionamento ou oferecer novidade.
+    4. SAÍDA OBRIGATÓRIA: ASSUNTO|CORPO_HTML
     """
+    
     try:
         model = genai.GenerativeModel('gemini-pro')
-        resp = model.generate_content(prompt)
-        txt = resp.text.strip()
-        if "|" in txt: return txt.split("|", 1)
-        return "Contato Elo", txt
-    except Exception as e: return "Erro", str(e)
-
-def enviar_email(conf, para, assunto, corpo):
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = conf['smtp_user']
-        msg['To'] = para
-        msg['Subject'] = assunto
-        msg.attach(MIMEText(f"{corpo}<br><br>{conf.get('assinatura_html','')}", 'html'))
-        s = smtplib.SMTP(conf['smtp_host'], conf['smtp_port'])
-        s.starttls()
-        s.login(conf['smtp_user'], conf['smtp_pass_app'])
-        s.sendmail(conf['smtp_user'], para, msg.as_string())
-        s.quit()
-        return True, "Enviado"
-    except Exception as e: return False, str(e)
+        response = model.generate_content(prompt)
+        texto = response.text.strip()
+        
+        if "|" in texto:
+            parts = texto.split("|", 1)
+            return parts[0].strip(), parts[1].strip()
+        else:
+            return "Oportunidade Elo Brindes", texto
+            
+    except Exception as e:
+        return "Erro IA", f"Falha na geração: {str(e)}"
 
 # =========================================================
-#  INTERFACE PRINCIPAL
+#  MOTOR DE ENVIO (SMTP)
+# =========================================================
+def enviar_email_smtp(smtp_config, destinatario, assunto, corpo_html):
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = smtp_config['smtp_user']
+        msg['To'] = destinatario
+        msg['Subject'] = assunto
+        
+        assinatura = smtp_config.get('assinatura_html', '')
+        corpo_final = f"{corpo_html}<br><br>{assinatura}"
+        
+        msg.attach(MIMEText(corpo_final, 'html'))
+        
+        server = smtplib.SMTP(smtp_config['smtp_host'], smtp_config['smtp_port'])
+        server.starttls()
+        server.login(smtp_config['smtp_user'], smtp_config['smtp_pass_app'])
+        server.sendmail(smtp_config['smtp_user'], destinatario, msg.as_string())
+        server.quit()
+        return True, "Enviado"
+    except Exception as e:
+        return False, str(e)
+
+# =========================================================
+#  INTERFACE (STREAMLIT)
 # =========================================================
 
 # --- TELA DE LOGIN ---
 if 'token' not in st.session_state:
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.markdown("<br><h1 style='text-align:center; color:#E31937'>🦅 NeuroSales CRM</h1>", unsafe_allow_html=True)
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #E31937;'>🦅 NeuroSales CRM</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #888;'>Acesse sua carteira exclusiva</p>", unsafe_allow_html=True)
+        
         email = st.text_input("E-mail")
         senha = st.text_input("Senha", type="password")
+        
         if st.button("ENTRAR", use_container_width=True):
-            token, user = login_directus_debug(email, senha)
-            if token:
-                st.session_state['token'] = token
-                st.session_state['user'] = user
-                st.rerun()
+            if not email or not senha:
+                st.warning("Preencha todos os campos.")
+            else:
+                token, user_data = login_directus(email, senha)
+                if token:
+                    st.session_state['token'] = token
+                    st.session_state['user'] = user_data
+                    st.rerun()
+                else:
+                    st.error("Login falhou. Verifique suas credenciais.")
     st.stop()
 
-# --- APP LOGADO ---
-token = st.session_state['token']
+# --- DASHBOARD LOGADO ---
 user = st.session_state['user']
+token = st.session_state['token']
 
-# Sidebar
+# Sidebar (Perfil e Config)
 with st.sidebar:
-    st.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
-    st.write(f"👤 **{user.get('first_name', 'Vendedor')}**")
-    if st.button("Sair"):
+    st.write(f"👤 **{user.get('first_name', 'Vendedor')} {user.get('last_name', '')}**")
+    
+    if st.button("🚪 Sair"):
         st.session_state.clear()
         st.rerun()
+    
     st.divider()
-    with st.expander("⚙️ Configurar E-mail"):
-        conf = config_smtp_crud(token)
-        h = st.text_input("Host", value=conf['smtp_host'] if conf else "smtp.gmail.com")
-        p = st.number_input("Porta", value=conf['smtp_port'] if conf else 587)
-        u = st.text_input("Email", value=conf['smtp_user'] if conf else "")
-        pw = st.text_input("Senha App", type="password", value=conf['smtp_pass_app'] if conf else "")
-        ass = st.text_area("Assinatura HTML", value=conf['assinatura_html'] if conf else "")
-        if st.button("Salvar Config"):
-            payload = {"smtp_host": h, "smtp_port": int(p), "smtp_user": u, "smtp_pass_app": pw, "assinatura_html": ass}
-            config_smtp_crud(token, payload)
-            st.success("Salvo!")
+    st.markdown("### ⚙️ Configuração SMTP")
+    with st.expander("Configurar meu E-mail"):
+        conf = pegar_config_smtp(token)
+        
+        # Valores padrão ou carregados do banco
+        val_host = conf['smtp_host'] if conf else "smtp.gmail.com"
+        val_port = conf['smtp_port'] if conf else 587
+        val_user = conf['smtp_user'] if conf else ""
+        val_pass = conf['smtp_pass_app'] if conf else ""
+        val_ass = conf['assinatura_html'] if conf else "<p>Att,<br><b>Equipe Elo</b></p>"
+        
+        smtp_host = st.text_input("Host SMTP", value=val_host)
+        smtp_port = st.number_input("Porta", value=val_port)
+        smtp_user = st.text_input("Seu E-mail", value=val_user)
+        smtp_pass = st.text_input("Senha de App", type="password", value=val_pass)
+        assinatura = st.text_area("Assinatura HTML", value=val_ass)
+        
+        if st.button("Salvar Configuração"):
+            salvar_config_smtp(token, smtp_host, smtp_port, smtp_user, smtp_pass, assinatura)
+            st.success("Configuração salva!")
 
-# Carrega Dados
-df = carregar_clientes_api(token)
+# Carregar Dados Iniciais
+df_clientes = carregar_clientes(token)
 campanha = carregar_campanha_ativa(token)
 
-if df.empty:
-    st.warning("⚠️ Sua carteira está vazia ou falha ao carregar.")
+st.title(f"Painel de Vendas - {user.get('first_name', '')}")
+
+if df_clientes.empty:
+    st.info("👋 Olá! Nenhum cliente encontrado na sua carteira. Fale com o administrador para importar os dados.")
     st.stop()
 
-# --- MÉTRICAS ---
-st.title(f"Visão Geral - {user.get('first_name','')}")
+# Métricas Topo
 k1, k2, k3 = st.columns(3)
-k1.markdown(f"<div class='metric-card'><h3>Total Clientes</h3><h1>{len(df)}</h1></div>", unsafe_allow_html=True)
-inativos = len(df[df['Categoria_Cliente'].astype(str).str.contains('Inativo|Frio', case=False)])
-k2.markdown(f"<div class='metric-card'><h3>Oportunidades (Inativos)</h3><h1 style='color:#E31937'>{inativos}</h1></div>", unsafe_allow_html=True)
-k3.markdown(f"<div class='metric-card'><h3>Campanha</h3><h4>{campanha['nome_campanha'] if campanha else 'Nenhuma'}</h4></div>", unsafe_allow_html=True)
+total_cli = len(df_clientes)
+inativos_count = len(df_clientes[df_clientes['status_carteira'].astype(str).str.contains('Inativo|Frio', case=False, na=False)])
+campanha_nome = campanha['nome_campanha'] if campanha else "Nenhuma Campanha Ativa"
+
+k1.markdown(f"<div class='metric-card'><h3>Total Clientes</h3><h1>{total_cli}</h1></div>", unsafe_allow_html=True)
+k2.markdown(f"<div class='metric-card'><h3>Inativos/Frios</h3><h1 style='color:#E31937'>{inativos_count}</h1></div>", unsafe_allow_html=True)
+k3.markdown(f"<div class='metric-card'><h3>Campanha Atual</h3><h4>{campanha_nome}</h4></div>", unsafe_allow_html=True)
 
 st.divider()
 
-# --- PREPARA DADOS ---
-# Cria label para o selectbox
-df['label_select'] = df['razao_social'] + " (" + df['Ultima_Compra'] + ")"
-df['tel_clean'] = df['telefone_1'].apply(limpar_telefone)
-df['falta_telefone'] = df['tel_clean'].apply(lambda x: not x or len(x) < 8)
-df['falta_email'] = df['email_1'].apply(lambda x: not str(x) or str(x).lower() == 'nan' or '@' not in str(x))
-df_needs_update = df[(df['falta_telefone']) | (df['falta_email'])].copy()
+# Abas Principais
+tab1, tab2 = st.tabs(["🚀 Modo Ataque (IA + Email)", "📋 Carteira Completa"])
 
-# =========================================================
-#  LADO A LADO: MODO DE ATAQUE (ESQUERDA) | MODO ATUALIZAÇÃO (DIREITA)
-# =========================================================
-col_left, col_right = st.columns([1, 1], gap="large")
-
-# === ESQUERDA: ATAQUE ===
-with col_left:
-    st.subheader("🚀 Modo de Ataque (Vendas)")
+# --- TAB 1: MODO ATAQUE ---
+with tab1:
+    st.subheader("Gerador de Oportunidades")
     
-    opcoes_ataque = sorted(list(set(df['label_select'].tolist())))
-    selecionado = st.selectbox("Busque Cliente:", ["Selecione..."] + opcoes_ataque, key="sel_ataque")
-
-    if selecionado and selecionado != "Selecione...":
-        cli = df[df['label_select'] == selecionado].iloc[0]
-        
-        # Dados do Cliente
-        area_cli = str(cli['area_atuacao_nome'])
-        sugestoes_skus, motivo_sugestao = gerar_sugestoes_janeiro(area_cli)
-        html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
-        
-        script_msg = f"Olá! Sou da Elo Brindes. Vi que sua última compra foi em {cli['Ultima_Compra']}. Temos novidades para {area_cli}."
-        
-        # HTML do Card Rico
-        html_card = f"""
-        <div class="foco-card">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cli['razao_social'][:25]}...</h2>
-                <span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cli['pj_id']}</span>
-            </div>
-            <div class="foco-grid">
-                <div class="foco-item"><b>📍 Área</b>{area_cli}</div>
-                <div class="foco-item"><b>📞 Tel</b>{cli['telefone_1']}</div>
-                <div class="foco-item"><b>📧 Email</b>{str(cli['email_1'])[:25]}...</div>
-                <div class="foco-item"><b>📅 Compra</b>{cli['Ultima_Compra']}</div>
-            </div>
-            <div class="sugestao-box">
-                <div class="sugestao-title">🎯 Sugestão ({area_cli})</div>
-                <div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
-                {html_sugestoes}
-            </div>
-            <div class="script-box">
-                <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script WhatsApp:</b>
-                "{script_msg}"
-            </div>
-        </div>
-        """
-        st.markdown(html_card, unsafe_allow_html=True)
-        
-        # Botões
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            if cli['tel_clean'] and len(cli['tel_clean']) >= 10:
-                link_wpp = f"https://wa.me/55{cli['tel_clean']}?text={urllib.parse.quote(script_msg)}"
-                st.link_button("💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
-        with b2:
-            if cli['email_1'] and "@" in str(cli['email_1']):
-                # Integração IA no botão
-                if st.button("✨ IA Magica"):
-                    subj, body = gerar_email_ia(cli['razao_social'], area_cli, cli['Ultima_Compra'], campanha)
-                    st.session_state['ia_temp'] = {'subj': subj, 'body': body, 'email': cli['email_1'], 'id': cli['pj_id']}
-        
-        # Resultado da IA
-        if 'ia_temp' in st.session_state:
-            res = st.session_state['ia_temp']
-            st.info(f"Assunto: {res['subj']}")
-            st.markdown(res['body'], unsafe_allow_html=True)
-            if st.button("🚀 Enviar Email Agora"):
-                conf = config_smtp_crud(token)
-                if conf:
-                    ok, msg = enviar_email(conf, res['email'], res['subj'], res['body'])
-                    if ok: st.success("Enviado!"); registrar_log(token, res['id'], res['subj'], res['body'], "Sucesso")
-                    else: st.error(f"Erro: {msg}")
-
-# === DIREITA: ATUALIZAÇÃO ===
-with col_right:
-    st.subheader("📝 Modo Atualização (Pendentes)")
+    # Filtros
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        opcoes_status = df_clientes['status_carteira'].dropna().unique().tolist()
+        filtro_status = st.multiselect("Filtrar Status:", options=opcoes_status)
+    with col_f2:
+        opcoes_ramo = df_clientes['area_atuacao'].dropna().unique().tolist()
+        filtro_ramo = st.multiselect("Filtrar Ramo:", options=opcoes_ramo)
     
-    if df_needs_update.empty:
-        st.success("✅ Nenhum cadastro pendente!")
-    else:
-        df_needs_update['label_select'] = df_needs_update['razao_social'] + " (Pendentes)"
-        opcoes_update = sorted(list(set(df_needs_update['label_select'].tolist())))
-        selecionado_up = st.selectbox("Atualizar:", ["Selecione..."] + opcoes_update, key="sel_update")
-
-        if selecionado_up and selecionado_up != "Selecione...":
-            cli_up = df_needs_update[df_needs_update['label_select'] == selecionado_up].iloc[0]
+    df_filtrado = df_clientes.copy()
+    if filtro_status:
+        df_filtrado = df_filtrado[df_filtrado['status_carteira'].isin(filtro_status)]
+    if filtro_ramo:
+        df_filtrado = df_filtrado[df_filtrado['area_atuacao'].isin(filtro_ramo)]
+        
+    st.dataframe(
+        df_filtrado[['razao_social', 'email_1', 'status_carteira', 'data_ultima_compra']], 
+        use_container_width=True, 
+        hide_index=True
+    )
+    
+    st.markdown("### 📧 Preparar Disparo")
+    
+    # Selectbox dos clientes filtrados
+    if not df_filtrado.empty:
+        clientes_dict = df_filtrado.set_index('id')['razao_social'].to_dict()
+        selecionados_ids = st.multiselect(
+            "Selecione os clientes para atacar:", 
+            options=clientes_dict.keys(), 
+            format_func=lambda x: clientes_dict[x]
+        )
+        
+        if selecionados_ids:
+            st.info(f"{len(selecionados_ids)} clientes selecionados.")
             
-            html_card_up = f"""
-            <div class="foco-card" style="border-left: 6px solid #FFD700;">
-                <h3 style='color:#FFD700'>⚠️ Dados Faltantes</h3>
-                <h2 style='color:white'>{cli_up['razao_social']}</h2>
-                <div class="foco-grid">
-                    <div class="foco-item"><b>CNPJ</b> {cli_up['cnpj']}</div>
-                    <div class="foco-item" style="color:#FFD700"><b>Tel</b> {cli_up['telefone_1'] or 'VAZIO'}</div>
-                    <div class="foco-item" style="color:#FFD700"><b>Email</b> {cli_up['email_1'] or 'VAZIO'}</div>
-                </div>
-            </div>
-            """
-            st.markdown(html_card_up, unsafe_allow_html=True)
+            # Botão 1: Gerar IA
+            if st.button("✨ 1. Gerar Rascunhos com IA", type="primary"):
+                if not GEMINI_API_KEY:
+                    st.error("Erro: Configure a API KEY do Gemini.")
+                else:
+                    rascunhos = []
+                    progresso = st.progress(0)
+                    texto_progresso = st.empty()
+                    
+                    for i, c_id in enumerate(selecionados_ids):
+                        cli_row = df_clientes[df_clientes['id'] == c_id].iloc[0]
+                        texto_progresso.text(f"Gerando para: {cli_row['razao_social']}...")
+                        
+                        assunto, corpo = gerar_email_ia(
+                            cli_row['razao_social'], 
+                            cli_row['area_atuacao'], 
+                            cli_row['data_ultima_compra'], 
+                            campanha
+                        )
+                        rascunhos.append({
+                            "id": c_id,
+                            "pj_id": cli_row.get('pj_id', '-'),
+                            "razao_social": cli_row['razao_social'],
+                            "email": cli_row['email_1'],
+                            "assunto": assunto,
+                            "corpo": corpo
+                        })
+                        progresso.progress((i + 1) / len(selecionados_ids))
+                    
+                    st.session_state['rascunhos_gerados'] = rascunhos
+                    st.success("Rascunhos gerados! Revise abaixo.")
 
-# =========================================================
-#  TABELA GERAL COM LÓGICA DE CHECKBOX "ABRIR"
-# =========================================================
-st.divider()
-st.subheader("📋 Lista Geral (Com Ações)")
+    # Área de Revisão e Envio
+    if 'rascunhos_gerados' in st.session_state and st.session_state['rascunhos_gerados']:
+        st.divider()
+        st.subheader("📝 Revisão e Disparo")
+        
+        # Mostra preview do primeiro como exemplo
+        st.markdown("**Preview dos E-mails Gerados:**")
+        for item in st.session_state['rascunhos_gerados']:
+            with st.expander(f"✉️ {item['razao_social']} - {item['assunto']}"):
+                st.markdown(item['corpo'], unsafe_allow_html=True)
+                st.caption(f"Envia para: {item['email']}")
+        
+        if st.button("🚀 2. Disparar Todos Agora"):
+            conf_smtp = pegar_config_smtp(token)
+            if not conf_smtp or not conf_smtp.get('smtp_pass_app'):
+                st.error("⚠️ ERRO: Você não configurou seu E-mail SMTP na barra lateral!")
+            else:
+                bar_envio = st.progress(0)
+                log_status = []
+                
+                for i, item in enumerate(st.session_state['rascunhos_gerados']):
+                    if not item['email'] or "@" not in str(item['email']):
+                        log_status.append(f"❌ {item['razao_social']}: E-mail inválido")
+                        continue
+                        
+                    sucesso, msg = enviar_email_smtp(conf_smtp, item['email'], item['assunto'], item['corpo'])
+                    
+                    if sucesso:
+                        registrar_log_envio(token, item['pj_id'], item['assunto'], item['corpo'], "Sucesso")
+                        log_status.append(f"✅ {item['razao_social']}: Enviado")
+                    else:
+                        registrar_log_envio(token, item['pj_id'], item['assunto'], item['corpo'], f"Erro: {msg}")
+                        log_status.append(f"❌ {item['razao_social']}: Falha ({msg})")
+                    
+                    # Delay Humanizado (5 a 10s)
+                    time.sleep(random.uniform(5, 10))
+                    bar_envio.progress((i + 1) / len(st.session_state['rascunhos_gerados']))
+                
+                st.success("Disparos finalizados!")
+                st.write(log_status)
+                # Limpa a sessão
+                del st.session_state['rascunhos_gerados']
 
-# Configuração visual das colunas
-col_config = {
-    "pj_id": st.column_config.TextColumn("ID", disabled=True),
-    "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
-    "ABRIR": st.column_config.CheckboxColumn("Ver Ficha", default=False, width="small"), # A Mágica
-    "status_carteira": st.column_config.SelectboxColumn("Status", options=['Ativo', 'Inativo', 'Frio', 'Novo']),
-    "obs_gerais": st.column_config.TextColumn("Obs", width="large"),
-}
-
-# Prepara dados para a tabela
-df['ABRIR'] = False # Inicializa checkbox desmarcado
-cols_show = ['pj_id', 'razao_social', 'ABRIR', 'status_carteira', 'obs_gerais', 'telefone_1', 'Ultima_Compra', 'email_1']
-
-# Mostra tabela editável
-df_edit = st.data_editor(
-    df[cols_show], 
-    column_config=col_config, 
-    hide_index=True, 
-    use_container_width=True, 
-    key="editor_crm", 
-    height=500
-)
-
-# --- LÓGICA DE AÇÃO DO CHECKBOX "ABRIR" ---
-rows_abrir = df_edit[df_edit['ABRIR'] == True]
-if not rows_abrir.empty:
-    target = rows_abrir.iloc[0]
-    # Cria o label para o dropdown lá de cima
-    lbl_target = target['razao_social'] + " (" + target['Ultima_Compra'] + ")"
-    
-    # Joga na variável de ponte e recarrega
-    st.session_state['pending_client_select'] = lbl_target
-    st.toast(f"Abrindo ficha: {target['razao_social']}...", icon="📂")
-    time.sleep(0.3)
-    st.rerun()
-
-# --- LÓGICA DE SALVAR EDIÇÃO (OBS/STATUS) ---
-# Compara se mudou algo importante
-if not df_edit[['status_carteira', 'obs_gerais']].equals(df[['status_carteira', 'obs_gerais']]):
-    # Acha onde mudou (simplificado: pega a primeira mudança e salva)
-    # Num app real, faria um loop de diffs
-    st.toast("Salvando alterações...", icon="💾")
-    # Aqui entraria a lógica complexa de diff, mas para o MVP vou avisar que salvou
-    # A implementação real de diff linha a linha seria pesada para este script único
+# --- TAB 2: LISTA COMPLETA ---
+with tab2:
+    st.subheader("Base Geral")
+    st.dataframe(df_clientes, use_container_width=True)
