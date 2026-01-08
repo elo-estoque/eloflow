@@ -81,25 +81,39 @@ def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
-def gerar_sugestoes_fixas(area_atuacao):
-    area_upper = str(area_atuacao).upper()
-    sugestoes = []
-    motivo = "Mix Geral"
+def gerar_sugestoes_elo_brindes(area_atuacao):
+    """
+    Gera sugestões baseadas no portfólio REAL da Elo Brindes usando IA.
+    Se a IA falhar, usa um fallback de brindes genéricos (não limpeza).
+    """
+    if not GEMINI_API_KEY:
+        # Fallback se não tiver chave
+        return ["🎁 Kit Boas Vindas Personalizado", "🎁 Caneta Metal Premium", "🎁 Caderno Moleskine com Logo"], "Sugestão Padrão (Sem IA)"
     
-    if any(x in area_upper for x in ['ESCOLA', 'EDUCACIONAL', 'CURSO']):
-        sugestoes = ["📦 Papel Sulfite A4", "📦 Canetas Esferográficas", "📦 Marcadores de Quadro Branco"]
-        motivo = "Volta às Aulas / Material de Secretaria"
-    elif any(x in area_upper for x in ['SAUDE', 'HOSPITAL', 'CLINICA', 'FARMACIA']):
-        sugestoes = ["📦 Luvas Descartáveis", "📦 Papel Toalha Interfolha", "📦 Copos Descartáveis"]
-        motivo = "Higiene e Descartáveis"
-    elif any(x in area_upper for x in ['INDUSTRIA', 'FABRICA', 'LOGISTICA', 'TRANSPORTE']):
-        sugestoes = ["📦 Fita Adesiva", "📦 Filme Stretch", "📦 EPIs Básicos"]
-        motivo = "Expedição e Segurança"
-    else:
-        sugestoes = ["📦 Kit Café (Copos + Açúcar)", "📦 Material de Escritório Básico", "📦 Produtos de Limpeza"]
-        motivo = "Uso Geral Corporativo"
+    try:
+        # Prompt focado no site Elo Brindes
+        prompt = f"""
+        Você é um consultor especialista da Elo Brindes (www.elobrindes.com.br).
+        O cliente atua na área: '{area_atuacao}'.
+        Sugira 3 brindes corporativos personalizados do catálogo da Elo Brindes que façam sentido para este ramo.
+        Responda EXATAMENTE no formato: Produto A|Produto B|Produto C
+        Não use introduções, apenas os nomes dos produtos.
+        """
+        model = genai.GenerativeModel('gemini-pro')
+        response = model.generate_content(prompt)
+        texto = response.text.strip()
         
-    return sugestoes, motivo
+        if "|" in texto:
+            produtos = texto.split("|")
+            # Adiciona emoji de caixa se a IA não mandou
+            produtos_fmt = [f"📦 {p.strip().replace('📦', '')}" for p in produtos[:3]]
+            return produtos_fmt, f"Sugestão IA (Baseada em {area_atuacao})"
+        else:
+            return [f"📦 {texto}"], "Sugestão IA"
+            
+    except Exception:
+        # Fallback de segurança (Brindes, não limpeza)
+        return ["🎁 Garrafa Térmica Personalizada", "🎁 Mochila Executiva", "🎁 Kit Tecnológico (Powerbank)"], "Sugestão Geral (Erro IA)"
 
 # =========================================================
 #  FUNÇÕES DE BACKEND
@@ -143,7 +157,6 @@ def carregar_clientes(token):
     base_url = DIRECTUS_URL.rstrip('/')
     headers = {"Authorization": f"Bearer {token}"}
     
-    # Tenta carregar campos, com fallback se não existirem
     fields_full = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,tentativa_1,tentativa_2,tentativa_3"
     fields_safe = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj"
     
@@ -157,7 +170,6 @@ def carregar_clientes(token):
         if r.status_code == 200:
             df = pd.DataFrame(r.json()['data'])
         else:
-            # Fallback
             colunas_faltantes = True
             url_safe = f"{base_url}/items/clientes?limit=-1&fields={fields_safe}"
             r_safe = requests.get(url_safe, headers=headers, timeout=10, verify=False)
@@ -187,7 +199,7 @@ def carregar_clientes(token):
                 df[col] = df[col].fillna("")
 
             if colunas_faltantes:
-                st.toast("⚠️ Aviso: Colunas de 'Tentativa' não encontradas no Directus. Criando temporariamente.", icon="⚠️")
+                st.toast("⚠️ Aviso: Colunas de 'Tentativa' não encontradas no Directus.", icon="⚠️")
                 
             return df
             
@@ -325,7 +337,7 @@ df = carregar_clientes(token)
 campanha = carregar_campanha_ativa(token)
 
 if df.empty:
-    st.warning("⚠️ Sua carteira está vazia ou falha ao carregar (Verifique conexão ou colunas no Directus).")
+    st.warning("⚠️ Sua carteira está vazia ou falha ao carregar.")
     st.stop()
 
 st.title(f"Visão Geral - {user.get('first_name','')}")
@@ -350,32 +362,19 @@ if filtro_status:
 if filtro_area:
     df_filtrado = df_filtrado[df_filtrado['area_atuacao'].astype(str).isin(filtro_area)]
 
-# CRIAÇÃO DA COLUNA DE SELEÇÃO E ID UNICO PARA O SELECTBOX
 if not df_filtrado.empty:
     df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
 
-# =========================================================================================
-#  LÓGICA PRIORITÁRIA: DETECÇÃO DE CLIQUE NA TABELA (ANTES DE DESENHAR O MENU)
-# =========================================================================================
+# --- LÓGICA DE GATILHO ---
 if "editor_dados" in st.session_state:
     changes = st.session_state["editor_dados"]["edited_rows"]
-    # Verifica se houve clique na ação
     for idx, val in changes.items():
         if val.get("Ação") is True:
-            # Pega o cliente correspondente ao índice clicado
             try:
-                # O idx retornado pelo data_editor é relativo ao df exibido nele (df_filtrado)
-                # Precisamos pegar o nome exato para forçar o selectbox
                 cliente_alvo = df_filtrado.iloc[int(idx)]['label_select']
-                
-                # Atualiza a chave do selectbox APENAS se for diferente (para evitar loops)
                 if st.session_state.get("sb_principal") != cliente_alvo:
                     st.session_state["sb_principal"] = cliente_alvo
-                    # NÃO PRECISA DE RERUN AQUI, POIS O MENU SERÁ DESENHADO LOGO ABAIXO COM ESSE VALOR
-            except Exception as e:
-                pass # Ignora erros de índice se a tabela mudou muito rápido
-
-# =========================================================================================
+            except Exception: pass
 
 st.divider()
 
@@ -386,13 +385,11 @@ with col_left:
     if not df_filtrado.empty:
         opcoes = sorted(df_filtrado['label_select'].tolist())
         
-        # Garante que a variável de sessão existe e é válida
         if "sb_principal" not in st.session_state:
             st.session_state["sb_principal"] = "Selecione..."
         if st.session_state["sb_principal"] not in (["Selecione..."] + opcoes):
              st.session_state["sb_principal"] = "Selecione..."
 
-        # O widget lê a session_state["sb_principal"] automaticamente por ter a key igual
         selecionado = st.selectbox(
             "Busque Cliente (Filtrado):", 
             ["Selecione..."] + opcoes, 
@@ -406,9 +403,13 @@ with col_left:
             tel_raw = str(cli['telefone_1'])
             email_cli = str(cli['email_1'])
             tel_clean = limpar_telefone(tel_raw)
-            sugestoes, motivo_sugestao = gerar_sugestoes_fixas(area_cli)
+            
+            # --- AQUI ESTÁ A MÁGICA: CHAMA A NOVA FUNÇÃO DE SUGESTÃO ELO ---
+            with st.spinner("🦅 Consultando catálogo Elo Brindes..."):
+                 sugestoes, motivo_sugestao = gerar_sugestoes_elo_brindes(area_cli)
+                 
             html_sugestoes = "".join([f"<div class='sku-item'>{s}</div>" for s in sugestoes])
-            script_msg = f"Olá! Sou da Elo Brindes. Vi que sua última compra foi há {dias} dias. Temos novidades para {area_cli}."
+            script_msg = f"Olá! Sou da Elo Brindes. Vi que sua última compra foi há {dias} dias. Temos novidades personalizadas para {area_cli}."
             
             html_card = f"""
             <div class="foco-card">
@@ -424,7 +425,7 @@ with col_left:
                     <div class="foco-item"><b>⚠️ Status</b>{cli['Categoria_Cliente']}</div>
                 </div>
                 <div class="sugestao-box">
-                    <div class="sugestao-title">🎯 Sugestão ({area_cli})</div>
+                    <div class="sugestao-title">🎯 Sugestão Elo ({area_cli})</div>
                     <div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
                     {html_sugestoes}
                 </div>
@@ -521,14 +522,12 @@ if not df_filtrado.empty:
         "Categoria_Cliente": st.column_config.TextColumn("Status", disabled=True),
         "Ultima_Compra": st.column_config.TextColumn("Ult. Compra", disabled=True),
         "GAP (dias)": st.column_config.NumberColumn("GAP (dias)", disabled=True),
-        "id": None, # ID Oculto
+        "id": None, 
         "Ação": st.column_config.CheckboxColumn("➡️ Abrir", help="Clique para abrir os dados deste cliente lá em cima", default=False)
     }
 
-    # Adiciona a coluna de botão/ação no inicio
     df_filtrado.insert(0, "Ação", False)
 
-    # Exibe editor
     edicoes = st.data_editor(
         df_filtrado[["Ação"] + colunas_selecionadas + ['id']], 
         key="editor_dados",
@@ -552,7 +551,6 @@ if not df_filtrado.empty:
                 idx = 0
 
                 for i, mudancas in alteracoes.items():
-                    # Ignora a coluna de Ação no salvamento do banco
                     dados_limpos = {k: v for k, v in mudancas.items() if k not in ['GAP (dias)', 'Ultima_Compra', 'Categoria_Cliente', 'label_select', 'data_temp', 'dias_sem_compra', 'pendente', 'Ação']}
                     
                     if dados_limpos:
