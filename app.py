@@ -172,13 +172,22 @@ def carregar_clientes(token):
                 hoje = pd.Timestamp.now()
                 df['dias_sem_compra'] = (hoje - df['data_temp']).dt.days.fillna(9999).astype(int)
                 
-                # Categoria Calculada
+                # Categoria Calculada (Atualizada para incluir Crítico)
                 def definir_cat(row):
                     if 'status_carteira' in row and row['status_carteira']: return row['status_carteira']
-                    if row['dias_sem_compra'] > 180: return "Inativo"
+                    dias = row['dias_sem_compra']
+                    if dias > 365: return "Crítico"
+                    if dias > 180: return "Inativo"
                     return "Ativo"
                 
                 df['Categoria_Cliente'] = df.apply(definir_cat, axis=1)
+                
+                # ADICIONANDO AS COLUNAS NOVAS SOLICITADAS
+                df['GAP (dias)'] = df['dias_sem_compra']
+                df['Tentativa 1'] = "-"
+                df['Tentativa 2'] = "-"
+                df['Tentativa 3'] = "-"
+                
                 return df
         return pd.DataFrame()
     except:
@@ -314,9 +323,29 @@ if df.empty:
 st.title(f"Visão Geral - {user.get('first_name','')}")
 k1, k2, k3 = st.columns(3)
 k1.markdown(f"<div class='metric-card'><h3>Total Clientes</h3><h1>{len(df)}</h1></div>", unsafe_allow_html=True)
-inativos = len(df[df['Categoria_Cliente'].astype(str).str.contains('Inativo|Frio', case=False)])
-k2.markdown(f"<div class='metric-card'><h3>Oportunidades (Inativos)</h3><h1 style='color:#E31937'>{inativos}</h1></div>", unsafe_allow_html=True)
+inativos = len(df[df['Categoria_Cliente'].astype(str).str.contains('Inativo|Frio|Crítico', case=False)])
+k2.markdown(f"<div class='metric-card'><h3>Oportunidades (Inativos/Crít.)</h3><h1 style='color:#E31937'>{inativos}</h1></div>", unsafe_allow_html=True)
 k3.markdown(f"<div class='metric-card'><h3>Campanha</h3><h4>{campanha['nome_campanha'] if campanha else 'Nenhuma'}</h4></div>", unsafe_allow_html=True)
+
+# --- FILTRAGEM GERAL SOLICITADA ---
+st.markdown("### 🔍 Filtros Globais")
+c_f1, c_f2 = st.columns(2)
+with c_f1:
+    # Filtro de Status (Ativos, Inativos, Críticos)
+    opcoes_status = sorted(list(df['Categoria_Cliente'].unique()))
+    filtro_status = st.multiselect("Filtrar por Status (Carteira):", options=opcoes_status, default=opcoes_status)
+
+with c_f2:
+    # Filtro de Área de Atuação
+    opcoes_area = sorted([str(x) for x in df['area_atuacao'].unique() if x is not None])
+    filtro_area = st.multiselect("Filtrar por Área de Atuação:", options=opcoes_area, default=opcoes_area)
+
+# Aplica a filtragem no DF
+df_filtrado = df.copy()
+if filtro_status:
+    df_filtrado = df_filtrado[df_filtrado['Categoria_Cliente'].isin(filtro_status)]
+if filtro_area:
+    df_filtrado = df_filtrado[df_filtrado['area_atuacao'].astype(str).isin(filtro_area)]
 
 st.divider()
 
@@ -327,90 +356,94 @@ col_left, col_right = st.columns([1, 1], gap="large")
 with col_left:
     st.subheader("🚀 Modo de Ataque (Vendas)")
     
-    # Prepara Dropdown
-    df['label_select'] = df['razao_social'] + " (" + df['Ultima_Compra'] + ")"
-    opcoes = sorted(df['label_select'].tolist())
-    selecionado = st.selectbox("Busque Cliente:", ["Selecione..."] + opcoes)
+    # Prepara Dropdown COM BASE NO FILTRO
+    if not df_filtrado.empty:
+        df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
+        opcoes = sorted(df_filtrado['label_select'].tolist())
+        selecionado = st.selectbox("Busque Cliente (Filtrado):", ["Selecione..."] + opcoes)
 
-    if selecionado and selecionado != "Selecione...":
-        cli = df[df['label_select'] == selecionado].iloc[0]
-        
-        # Dados para o Card
-        dias = cli['dias_sem_compra']
-        area_cli = str(cli['area_atuacao'])
-        tel_raw = str(cli['telefone_1'])
-        email_cli = str(cli['email_1'])
-        obs_cli = str(cli.get('obs_gerais', ''))
-        tel_clean = limpar_telefone(tel_raw)
-        
-        # Sugestões e Scripts (Lógica do App Antigo)
-        sugestoes, motivo_sugestao = gerar_sugestoes_fixas(area_cli)
-        html_sugestoes = "".join([f"<div class='sku-item'>{s}</div>" for s in sugestoes])
-        
-        script_msg = f"Olá! Sou da Elo Brindes. Vi que sua última compra foi há {dias} dias. Temos novidades para {area_cli}."
-        
-        # HTML DO CARD (O visual que você gosta)
-        html_card = f"""
-        <div class="foco-card">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cli['razao_social'][:25]}...</h2>
-                <span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cli['pj_id']}</span>
+        if selecionado and selecionado != "Selecione...":
+            cli = df_filtrado[df_filtrado['label_select'] == selecionado].iloc[0]
+            
+            # Dados para o Card
+            dias = cli['dias_sem_compra']
+            area_cli = str(cli['area_atuacao'])
+            tel_raw = str(cli['telefone_1'])
+            email_cli = str(cli['email_1'])
+            obs_cli = str(cli.get('obs_gerais', ''))
+            tel_clean = limpar_telefone(tel_raw)
+            
+            # Sugestões e Scripts (Lógica do App Antigo)
+            sugestoes, motivo_sugestao = gerar_sugestoes_fixas(area_cli)
+            html_sugestoes = "".join([f"<div class='sku-item'>{s}</div>" for s in sugestoes])
+            
+            script_msg = f"Olá! Sou da Elo Brindes. Vi que sua última compra foi há {dias} dias. Temos novidades para {area_cli}."
+            
+            # HTML DO CARD (O visual que você gosta)
+            html_card = f"""
+            <div class="foco-card">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cli['razao_social'][:25]}...</h2>
+                    <span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cli['pj_id']}</span>
+                </div>
+                <div class="foco-grid">
+                    <div class="foco-item"><b>📍 Área</b>{area_cli}</div>
+                    <div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
+                    <div class="foco-item"><b>📧 Email</b>{email_cli[:25]}...</div>
+                    <div class="foco-item"><b>📅 Compra</b>{cli['Ultima_Compra']}</div>
+                    <div class="foco-item"><b>⚠️ Status</b>{cli['Categoria_Cliente']}</div>
+                </div>
+                <div class="sugestao-box">
+                    <div class="sugestao-title">🎯 Sugestão ({area_cli})</div>
+                    <div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
+                    {html_sugestoes}
+                </div>
+                <div class="script-box">
+                    <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script WhatsApp:</b>
+                    "{script_msg}"
+                </div>
             </div>
-            <div class="foco-grid">
-                <div class="foco-item"><b>📍 Área</b>{area_cli}</div>
-                <div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
-                <div class="foco-item"><b>📧 Email</b>{email_cli[:25]}...</div>
-                <div class="foco-item"><b>📅 Compra</b>{cli['Ultima_Compra']}</div>
-            </div>
-            <div class="sugestao-box">
-                <div class="sugestao-title">🎯 Sugestão ({area_cli})</div>
-                <div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
-                {html_sugestoes}
-            </div>
-            <div class="script-box">
-                <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script WhatsApp:</b>
-                "{script_msg}"
-            </div>
-        </div>
-        """
-        st.markdown(html_card, unsafe_allow_html=True)
-        
-        # Botões de Ação
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            if tel_clean and len(tel_clean) >= 10:
-                link_wpp = f"https://wa.me/55{tel_clean}?text={urllib.parse.quote(script_msg)}"
-                st.link_button("💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
-        with b2:
-            if email_cli and "@" in email_cli:
-                link_gmail = f"https://mail.google.com/mail/?view=cm&fs=1&to={email_cli}&su=Contato Elo&body={script_msg}"
-                st.link_button("📧 Gmail", link_gmail, use_container_width=True)
-        with b3:
-            # BOTÃO NOVO: GERAR COM IA DENTRO DO CARD
-            if st.button("✨ IA Magica", use_container_width=True):
-                if not GEMINI_API_KEY:
-                    st.error("Sem Chave IA")
-                else:
-                    subj, body = gerar_email_ia(cli['razao_social'], area_cli, cli['Ultima_Compra'], campanha)
-                    st.session_state['ia_result'] = {'subj': subj, 'body': body, 'email': email_cli}
-        
-        # Mostra resultado da IA se gerado
-        if 'ia_result' in st.session_state:
-            res = st.session_state['ia_result']
-            st.info(f"Assunto: {res['subj']}")
-            st.markdown(res['body'], unsafe_allow_html=True)
-            if st.button("🚀 Enviar Email IA Agora"):
-                conf = config_smtp_crud(token)
-                if conf:
-                    ok, msg = enviar_email(conf, res['email'], res['subj'], res['body'])
-                    if ok: st.success("Enviado!"); registrar_log(token, cli['pj_id'], res['subj'], res['body'], "Sucesso")
-                    else: st.error(f"Erro: {msg}")
+            """
+            st.markdown(html_card, unsafe_allow_html=True)
+            
+            # Botões de Ação
+            b1, b2, b3 = st.columns(3)
+            with b1:
+                if tel_clean and len(tel_clean) >= 10:
+                    link_wpp = f"https://wa.me/55{tel_clean}?text={urllib.parse.quote(script_msg)}"
+                    st.link_button("💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
+            with b2:
+                if email_cli and "@" in email_cli:
+                    link_gmail = f"https://mail.google.com/mail/?view=cm&fs=1&to={email_cli}&su=Contato Elo&body={script_msg}"
+                    st.link_button("📧 Gmail", link_gmail, use_container_width=True)
+            with b3:
+                # BOTÃO NOVO: GERAR COM IA DENTRO DO CARD
+                if st.button("✨ IA Magica", use_container_width=True):
+                    if not GEMINI_API_KEY:
+                        st.error("Sem Chave IA")
+                    else:
+                        subj, body = gerar_email_ia(cli['razao_social'], area_cli, cli['Ultima_Compra'], campanha)
+                        st.session_state['ia_result'] = {'subj': subj, 'body': body, 'email': email_cli}
+            
+            # Mostra resultado da IA se gerado
+            if 'ia_result' in st.session_state:
+                res = st.session_state['ia_result']
+                st.info(f"Assunto: {res['subj']}")
+                st.markdown(res['body'], unsafe_allow_html=True)
+                if st.button("🚀 Enviar Email IA Agora"):
+                    conf = config_smtp_crud(token)
+                    if conf:
+                        ok, msg = enviar_email(conf, res['email'], res['subj'], res['body'])
+                        if ok: st.success("Enviado!"); registrar_log(token, cli['pj_id'], res['subj'], res['body'], "Sucesso")
+                        else: st.error(f"Erro: {msg}")
+    else:
+        st.info("Nenhum cliente encontrado com os filtros atuais.")
 
 # === COLUNA DIREITA: ATUALIZAÇÃO (PENDENTES) ===
 with col_right:
     st.subheader("📝 Modo Atualização")
     
-    # Filtra quem tem erro de cadastro
+    # Filtra quem tem erro de cadastro (usando o DF FILTRADO)
     def checar_pendencia(row):
         t = limpar_telefone(row['telefone_1'])
         e = str(row['email_1'])
@@ -418,35 +451,53 @@ with col_right:
         if not e or '@' not in e or 'nan' in e: return True
         return False
     
-    df['pendente'] = df.apply(checar_pendencia, axis=1)
-    df_pend = df[df['pendente'] == True].copy()
-    
-    if df_pend.empty:
-        st.success("✅ Nenhum cadastro pendente!")
-    else:
-        df_pend['lbl'] = df_pend['razao_social'] + " (Pendente)"
-        sel_up = st.selectbox("Atualizar:", ["Selecione..."] + sorted(df_pend['lbl'].tolist()))
+    if not df_filtrado.empty:
+        df_filtrado['pendente'] = df_filtrado.apply(checar_pendencia, axis=1)
+        df_pend = df_filtrado[df_filtrado['pendente'] == True].copy()
         
-        if sel_up and sel_up != "Selecione...":
-            cli_up = df_pend[df_pend['lbl'] == sel_up].iloc[0]
+        if df_pend.empty:
+            st.success("✅ Nenhum cadastro pendente nos filtros selecionados!")
+        else:
+            df_pend['lbl'] = df_pend['razao_social'] + " (Pendente)"
+            sel_up = st.selectbox("Atualizar:", ["Selecione..."] + sorted(df_pend['lbl'].tolist()))
             
-            # HTML Card Atualização
-            st.markdown(f"""
-            <div class="foco-card" style="border-left: 6px solid #FFD700;">
-                <h3 style='color:#FFD700'>⚠️ Dados Faltantes</h3>
-                <h2 style='color:white'>{cli_up['razao_social']}</h2>
-                <div class="foco-grid">
-                    <div class="foco-item"><b>CNPJ</b> {cli_up['cnpj']}</div>
-                    <div class="foco-item" style="color:#FFD700"><b>Tel</b> {cli_up['telefone_1'] or 'VAZIO'}</div>
-                    <div class="foco-item" style="color:#FFD700"><b>Email</b> {cli_up['email_1'] or 'VAZIO'}</div>
+            if sel_up and sel_up != "Selecione...":
+                cli_up = df_pend[df_pend['lbl'] == sel_up].iloc[0]
+                
+                # HTML Card Atualização
+                st.markdown(f"""
+                <div class="foco-card" style="border-left: 6px solid #FFD700;">
+                    <h3 style='color:#FFD700'>⚠️ Dados Faltantes</h3>
+                    <h2 style='color:white'>{cli_up['razao_social']}</h2>
+                    <div class="foco-grid">
+                        <div class="foco-item"><b>CNPJ</b> {cli_up['cnpj']}</div>
+                        <div class="foco-item" style="color:#FFD700"><b>Tel</b> {cli_up['telefone_1'] or 'VAZIO'}</div>
+                        <div class="foco-item" style="color:#FFD700"><b>Email</b> {cli_up['email_1'] or 'VAZIO'}</div>
+                    </div>
+                    <div class="script-box" style="border-left: 4px solid #FFD700;">
+                        🗣️ "Olá! Preciso atualizar o cadastro da {cli_up['razao_social']} para enviar o catálogo 2025."
+                    </div>
                 </div>
-                <div class="script-box" style="border-left: 4px solid #FFD700;">
-                    🗣️ "Olá! Preciso atualizar o cadastro da {cli_up['razao_social']} para enviar o catálogo 2025."
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+    else:
+        st.write("Sem dados.")
 
 # --- LISTA GERAL EMBAIXO ---
 st.divider()
-st.subheader("📋 Lista Geral")
-st.dataframe(df, use_container_width=True)
+st.subheader("📋 Lista Geral (Customizável)")
+
+# Seletor de colunas
+todas_colunas = list(df.columns)
+# Define colunas padrão interessantes
+colunas_padrao = [c for c in ['pj_id', 'razao_social', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'GAP (dias)', 'Tentativa 1', 'telefone_1'] if c in todas_colunas]
+
+colunas_selecionadas = st.multiselect(
+    "Selecione as colunas para exibir:",
+    options=todas_colunas,
+    default=colunas_padrao
+)
+
+if not df_filtrado.empty:
+    st.dataframe(df_filtrado[colunas_selecionadas], use_container_width=True)
+else:
+    st.write("Nenhum dado para exibir com os filtros atuais.")
