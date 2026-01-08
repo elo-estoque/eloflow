@@ -1,20 +1,20 @@
-
+# Usamos a imagem completa (não-slim) para garantir que tenha tudo sem precisar de internet extra
 FROM python:3.9
 
 WORKDIR /app
 
-# Copia e instala as dependências direto
+# Copia os requisitos
 COPY requirements.txt .
 
-# Atualiza o pip antes para garantir
+# Instala as bibliotecas do Python direto
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copia o resto dos arquivos
+# Copia o código
 COPY . .
 
+# Expõe a porta
 EXPOSE 8501
 
-HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
-
+# Comando de inicialização
 ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
