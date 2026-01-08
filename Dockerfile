@@ -1,18 +1,16 @@
-FROM python:3.9-slim
+
+FROM python:3.9
 
 WORKDIR /app
 
-# Instala dependências do sistema necessárias
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
-
+# Copia e instala as dependências direto
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt
+# Atualiza o pip antes para garantir
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
+# Copia o resto dos arquivos
 COPY . .
 
 EXPOSE 8501
