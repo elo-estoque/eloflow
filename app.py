@@ -494,9 +494,11 @@ with col_left:
                 
                 subject_enc = urllib.parse.quote(res['subj'])
                 body_enc = urllib.parse.quote(corpo_final)
-                mailto_link = f"mailto:{res['email']}?subject={subject_enc}&body={body_enc}"
                 
-                st.link_button("📧 Abrir no E-mail (Outlook/Gmail)", mailto_link, type="primary", use_container_width=True)
+                # --- ALTERADO AQUI PARA GOOGLE WORKSPACE/GMAIL ---
+                link_gmail_final = f"https://mail.google.com/mail/?view=cm&fs=1&to={res['email']}&su={subject_enc}&body={body_enc}"
+                
+                st.link_button("📧 Abrir no Gmail", link_gmail_final, type="primary", use_container_width=True)
 
     else:
         st.info("Nenhum cliente encontrado com os filtros atuais.")
