@@ -11,13 +11,15 @@ import os
 import random
 import urllib.parse
 import warnings
+import urllib3 # Necessário para silenciar o aviso de segurança
 
 # --- 1. CONFIGURAÇÕES INICIAIS ---
 st.set_page_config(page_title="NeuroSales CRM", layout="wide", page_icon="🦅")
 
-# Ignora avisos chatos
+# Ignora avisos chatos e desabilita aviso de SSL inseguro (Necessário para o Traefik/Self-signed)
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning) # <--- O PULO DO GATO 🐱
 os.environ["STREAMLIT_CLIENT_SHOW_ERROR_DETAILS"] = "false"
 
 # --- 2. CSS VISUAL (ESTILO DO ELO FLOW ORIGINAL + DARK MODE) ---
@@ -72,6 +74,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. VARIÁVEIS DE AMBIENTE ---
+# Atualizei para o seu link do print
 DIRECTUS_URL = os.getenv("DIRECTUS_URL", "https://elo-flow-eloflowdirectus-a9lluh-7f4d22-152-53-165-62.traefik.me")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") 
 
@@ -108,13 +111,19 @@ def gerar_sugestoes_fixas(area_atuacao):
     return sugestoes, motivo
 
 # =========================================================
-#  FUNÇÕES DE BACKEND (DIRECTUS + LOGIN)
+#  FUNÇÕES DE BACKEND (DIRECTUS + LOGIN COM CORREÇÃO SSL)
 # =========================================================
 
 def login_directus_debug(email, password):
     base_url = DIRECTUS_URL.rstrip('/')
     try:
-        response = requests.post(f"{base_url}/auth/login", json={"email": email, "password": password}, timeout=15)
+        # verify=False IGNORA O ERRO DE CERTIFICADO
+        response = requests.post(
+            f"{base_url}/auth/login", 
+            json={"email": email, "password": password}, 
+            timeout=15, 
+            verify=False 
+        )
     except Exception as e:
         st.error(f"❌ Erro de Conexão: {e}")
         return None, None
@@ -127,7 +136,12 @@ def login_directus_debug(email, password):
         token = response.json()['data']['access_token']
         # Tenta pegar perfil
         try:
-            user_resp = requests.get(f"{base_url}/users/me", headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            user_resp = requests.get(
+                f"{base_url}/users/me", 
+                headers={"Authorization": f"Bearer {token}"}, 
+                timeout=10, 
+                verify=False
+            )
             if user_resp.status_code == 200:
                 return token, user_resp.json()['data']
             elif user_resp.status_code == 403:
@@ -148,7 +162,7 @@ def carregar_clientes(token):
         fields = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj"
         url = f"{base_url}/items/clientes?limit=-1&fields={fields}"
         
-        r = requests.get(url, headers=headers, timeout=10)
+        r = requests.get(url, headers=headers, timeout=10, verify=False)
         if r.status_code == 200:
             df = pd.DataFrame(r.json()['data'])
             if not df.empty:
@@ -173,7 +187,11 @@ def carregar_clientes(token):
 def carregar_campanha_ativa(token):
     try:
         base_url = DIRECTUS_URL.rstrip('/')
-        r = requests.get(f"{base_url}/items/campanhas_vendas?filter[ativa][_eq]=true&limit=1", headers={"Authorization": f"Bearer {token}"})
+        r = requests.get(
+            f"{base_url}/items/campanhas_vendas?filter[ativa][_eq]=true&limit=1", 
+            headers={"Authorization": f"Bearer {token}"}, 
+            verify=False
+        )
         if r.status_code == 200 and r.json()['data']:
             return r.json()['data'][0]
     except: pass
@@ -185,14 +203,14 @@ def config_smtp_crud(token, payload=None):
     url = f"{base_url}/items/config_smtp"
     
     if payload:
-        check = requests.get(url, headers=headers)
+        check = requests.get(url, headers=headers, verify=False)
         if check.status_code == 200 and len(check.json()['data']) > 0:
-            requests.patch(f"{url}/{check.json()['data'][0]['id']}", json=payload, headers=headers)
+            requests.patch(f"{url}/{check.json()['data'][0]['id']}", json=payload, headers=headers, verify=False)
         else:
-            requests.post(url, json=payload, headers=headers)
+            requests.post(url, json=payload, headers=headers, verify=False)
         return True
     else:
-        r = requests.get(url, headers=headers)
+        r = requests.get(url, headers=headers, verify=False)
         if r.status_code == 200 and r.json()['data']: return r.json()['data'][0]
         return None
 
@@ -204,7 +222,7 @@ def registrar_log(token, pj_id, assunto, corpo, status):
             "cliente_pj_id": str(pj_id), "assunto_gerado": assunto, "corpo_email": corpo, 
             "status_envio": status, "data_envio": datetime.now().isoformat()
         }
-        requests.post(f"{base_url}/items/historico_envios", json=payload, headers=headers)
+        requests.post(f"{base_url}/items/historico_envios", json=payload, headers=headers, verify=False)
     except: pass
 
 # =========================================================
@@ -251,7 +269,7 @@ if 'token' not in st.session_state:
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         st.markdown("<br><h1 style='text-align:center; color:#E31937'>🦅 NeuroSales CRM</h1>", unsafe_allow_html=True)
-        st.caption(f"Conectado: {DIRECTUS_URL}")
+        # st.caption(f"Conectado: {DIRECTUS_URL}") # Comentei pra ficar mais limpo
         email = st.text_input("E-mail")
         senha = st.text_input("Senha", type="password")
         if st.button("ENTRAR", use_container_width=True):
@@ -289,7 +307,7 @@ df = carregar_clientes(token)
 campanha = carregar_campanha_ativa(token)
 
 if df.empty:
-    st.warning("⚠️ Sua carteira está vazia.")
+    st.warning("⚠️ Sua carteira está vazia ou falha ao carregar.")
     st.stop()
 
 # --- MÉTRICAS ---
