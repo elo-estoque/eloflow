@@ -1,780 +1,392 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.io as pio
-from datetime import datetime, date
-import os
-import io
-import urllib.parse
-import textwrap
+import requests
+import google.generativeai as genai
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime
 import time
+import os
+import random
 
-# --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Elo Flow - Prospecção", layout="wide", page_icon="🦅")
+# --- CONFIGURAÇÕES GERAIS ---
+st.set_page_config(page_title="NeuroSales CRM", layout="wide", page_icon="🦅")
 
-# =========================================================
-#  CORREÇÃO DO ERRO: LÓGICA DE PONTE (STATE BRIDGE)
-#  Isso precisa ficar antes de qualquer widget ser desenhado
-# =========================================================
-if 'pending_client_select' in st.session_state:
-    st.session_state['sel_ataque'] = st.session_state['pending_client_select']
-    del st.session_state['pending_client_select']
-
-if 'pending_update_select' in st.session_state:
-    st.session_state['sel_update'] = st.session_state['pending_update_select']
-    del st.session_state['pending_update_select']
-# =========================================================
-
-# --- CSS VISUAL ---
+# --- CSS PERSONALIZADO (DARK MODE & ELO BRAND) ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+    .stApp { background-color: #050505; color: #E5E7EB; }
+    div.stButton > button { background-color: #E31937; color: white; border: none; border-radius: 6px; }
+    div.stButton > button:hover { background-color: #C2132F; }
     
-    /* Força o fundo geral e texto base */
-    .stApp { 
-        background-color: #050505; 
-        color: #E5E7EB; 
-        font-family: 'Inter', sans-serif; 
-    }
-    
-    section[data-testid="stSidebar"] { background-color: #121212; border-right: 1px solid #333; }
-    
-    /* Estilo dos Cards */
-    .foco-card {
-        background-color: #151515 !important;
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #333;
-        border-left: 6px solid #E31937;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    /* Cards */
+    .metric-card {
+        background-color: #151515; border: 1px solid #333; 
+        padding: 15px; border-radius: 8px; border-left: 4px solid #E31937;
     }
     
-    /* Grid de informações dentro do card */
-    .foco-grid {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        margin-top: 15px;
-        font-size: 14px;
-    }
+    /* Status Badges */
+    .badge-frio { background-color: #3b82f6; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
+    .badge-inativo { background-color: #E31937; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
     
-    /* Itens individuais */
-    .foco-item {
-        background-color: #252525 !important;
-        color: #FFFFFF !important;
-        padding: 10px 14px;
-        border-radius: 6px;
-        border: 1px solid #3a3a3a;
-        line-height: 1.3;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .foco-item b {
-        color: #E31937 !important;
-        font-weight: 700;
-        font-size: 11px;
-        text-transform: uppercase;
-        margin-right: 10px;
-        min-width: 80px;
-    }
-    
-    /* Caixa de Sugestão */
-    .sugestao-box {
-        background-color: #2D2006 !important;
-        border: 1px solid #B45309;
-        border-radius: 8px;
-        padding: 12px;
-        margin-top: 15px;
-    }
-    .sugestao-title {
-        color: #FBBF24 !important;
-        font-weight: 700;
-        font-size: 14px;
-        margin-bottom: 8px;
-    }
-    .sku-item {
-        background-color: rgba(251, 191, 36, 0.15);
-        color: #FCD34D !important;
-        padding: 4px 8px;
-        border-radius: 4px;
-        margin-bottom: 4px;
-        font-size: 13px;
-        border: 1px solid rgba(251, 191, 36, 0.2);
-    }
-
-    /* Box de Observação e Script */
-    .foco-obs, .script-box {
-        background-color: #1E1E1E !important;
-        padding: 12px;
-        border-radius: 8px;
-        margin-top: 15px;
-        border: 1px solid #333;
-        color: #E0E0E0 !important;
-        font-size: 13px;
-        font-style: italic;
-    }
-    .script-box {
-        border-left: 4px solid #E31937;
-        background-color: #2A1015 !important;
-    }
-    
-    /* Botões */
-    div.stButton > button { background-color: #E31937; color: white; border: none; width: 100%; border-radius: 6px; }
-    div.stButton > button:hover { background-color: #C2132F; color: white; border-color: #C2132F; }
+    /* Inputs */
+    .stTextInput > div > div > input { background-color: #1A1A1A; color: white; border-color: #333; }
 </style>
 """, unsafe_allow_html=True)
 
-pio.templates.default = "plotly_dark"
+# --- VARIÁVEIS DE AMBIENTE (Configure no seu servidor ou .env) ---
+# URL do seu Directus (conforme configurado no .env anterior)
+DIRECTUS_URL = os.getenv("DIRECTUS_URL", "https://elo-operaes-elo-operaes-directus-sotkfd-93c3dc-152-53-165-62.traefik.me") 
+# Chave da IA (Coloque sua chave do Google AI Studio aqui ou nas variáveis de ambiente)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") 
 
-# --- CONFIGURAÇÃO DE PASTAS ---
-DATA_DIR = "/app/data" 
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
-DB_FILE = os.path.join(DATA_DIR, "db_elo_flow.csv")        
-CACHE_FILE = os.path.join(DATA_DIR, "cache_dados.xlsx")
-PRODUTOS_FILE = os.path.join(DATA_DIR, "mais_pedidos.csv") 
+# =========================================================
+#  FUNÇÕES DE BACKEND (API DIRECTUS)
+# =========================================================
 
-# --- FUNÇÕES AUXILIARES ---
-
-def carregar_crm_db():
-    # CORREÇÃO: Forçar leitura como STRING para evitar erro de float vs text
-    cols_padrao = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 'data_interacao', 
-                   'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
-                   'gap_1_2', 'gap_2_3', 'email_1', 'telefone_1']
-    
-    if os.path.exists(DB_FILE):
-        # dtype=str garante que gaps e telefones sejam lidos como texto
-        df = pd.read_csv(DB_FILE, dtype={
-            'pj_id': str, 
-            'email_1': str, 
-            'telefone_1': str,
-            'gap_1_2': str,
-            'gap_2_3': str
-        })
-        for col in cols_padrao:
-            if col not in df.columns:
-                df[col] = None
-        return df
-    else:
-        return pd.DataFrame(columns=cols_padrao)
-
-def salvar_alteracoes(df_editor, df_original_crm):
-    cols_salvar = ['pj_id', 'status_venda', 'ja_ligou', 'obs', 
-                   'data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3',
-                   'gap_1_2', 'gap_2_3', 'email_1', 'telefone_1']
-    
-    # Garante que as colunas existam no dataframe editado antes de salvar
-    for col in cols_salvar:
-        if col not in df_editor.columns:
-            df_editor[col] = None
-
-    novos_dados = df_editor[cols_salvar].copy()
-    novos_dados['data_interacao'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Garante datas em formato string
-    for col in ['data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']:
-        novos_dados[col] = pd.to_datetime(novos_dados[col], errors='coerce').dt.strftime('%Y-%m-%d')
-
-    novos_dados = novos_dados.drop_duplicates()
-    
-    crm_atualizado = df_original_crm[~df_original_crm['pj_id'].isin(novos_dados['pj_id'])]
-    crm_final = pd.concat([crm_atualizado, novos_dados], ignore_index=True)
-    
-    crm_final.to_csv(DB_FILE, index=False)
-    return crm_final
-
-def converter_para_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # Remover coluna de controle interno antes de exportar
-        if 'ABRIR' in df.columns:
-            df = df.drop(columns=['ABRIR'])
-        df.to_excel(writer, index=False, sheet_name='EloFlow_Dados')
-    return output.getvalue()
-
-def limpar_telefone(phone):
-    if pd.isna(phone): return None
-    return "".join(filter(str.isdigit, str(phone)))
-
-# --- LEITURA DO EXCEL DE CLIENTES ---
-@st.cache_data
-def carregar_excel(path_or_file):
+def login_directus(email, password):
+    """Autentica o vendedor e retorna o Token JWT + Dados do Usuário"""
     try:
-        xls = pd.ExcelFile(path_or_file)
-        dfs = []
-        for sheet_name in xls.sheet_names:
-            name_upper = sheet_name.upper()
-            
-            if "INATIVO" in name_upper: categoria = "Inativos (Recuperação)"
-            elif "FRIO" in name_upper: categoria = "Frios (Antigos)"
-            elif "ATIVO" in name_upper: categoria = "Ativos (Carteira)"
-            else: continue 
-            
-            df = pd.read_excel(xls, sheet_name=sheet_name)
-            df['Categoria_Cliente'] = categoria
-            
-            if 'DATA_EXIBICAO' in df.columns:
-                df['data_temp'] = pd.to_datetime(df['DATA_EXIBICAO'], errors='coerce', dayfirst=True)
-                df['Ultima_Compra'] = df['data_temp'].dt.strftime('%d/%m/%Y').fillna("-")
-                hoje = pd.Timestamp.now()
-                df['dias_sem_compra'] = (hoje - df['data_temp']).dt.days.fillna(9999).astype(int)
-            else:
-                df['Ultima_Compra'] = "-"
-                df['dias_sem_compra'] = 9999
-            
-            # Normalização de colunas
-            cols_check = {'area_atuacao_nome': 'Indefinido', 'telefone_1': '', 'email_1': '', 'pj_id': '', 'razao_social': ''}
-            for col, val in cols_check.items():
-                if col not in df.columns: df[col] = val
-                else: df[col] = df[col].fillna(val)
-
-            if 'pj_id' in df.columns:
-                df['pj_id'] = df['pj_id'].astype(str).str.replace(r'\.0$', '', regex=True)
-
-            dfs.append(df)
-            
-        if not dfs: return None
+        url = f"{DIRECTUS_URL}/auth/login"
+        payload = {"email": email, "password": password}
+        response = requests.post(url, json=payload)
         
-        df_final = pd.concat(dfs, ignore_index=True)
-        df_final = df_final.drop_duplicates() 
-        return df_final
-
+        if response.status_code == 200:
+            data = response.json()['data']
+            # Pega dados do usuário logado
+            user_resp = requests.get(f"{DIRECTUS_URL}/users/me", headers={"Authorization": f"Bearer {data['access_token']}"})
+            if user_resp.status_code == 200:
+                user_data = user_resp.json()['data']
+                return data['access_token'], user_data
+        return None, None
     except Exception as e:
-        return None
+        st.error(f"Erro de conexão: {e}")
+        return None, None
 
-# --- LEITURA DO EXCEL DE PRODUTOS (MAIS PEDIDOS) ---
-@st.cache_data
-def carregar_produtos_sugestao(path_or_file):
+def carregar_clientes(token):
+    """Busca clientes do Directus. As permissões da Role 'Vendedor' garantem que ele só veja os dele."""
     try:
-        # Tenta ler csv ou excel
-        if str(path_or_file).endswith('.csv'):
-            df = pd.read_csv(path_or_file, sep=None, engine='python') 
+        headers = {"Authorization": f"Bearer {token}"}
+        # Busca campos essenciais
+        fields = "pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,id"
+        url = f"{DIRECTUS_URL}/items/clientes?limit=-1&fields={fields}"
+        
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()['data']
+            if not data: return pd.DataFrame()
+            return pd.DataFrame(data)
         else:
-            df = pd.read_excel(path_or_file)
-            
-        # Normalizar colunas para maiusculo para facilitar busca
-        df.columns = [c.upper().strip() for c in df.columns]
-        
-        # Identificar colunas chaves
-        col_desc = next((c for c in df.columns if 'DESC' in c or 'NOME' in c or 'PRODUTO' in c), None)
-        col_id = next((c for c in df.columns if 'COD' in c or 'SKU' in c), None)
-        
-        if col_desc:
-            df = df.rename(columns={col_desc: 'PRODUTO_NOME'})
-        if col_id:
-            df = df.rename(columns={col_id: 'SKU'})
-        
-        # Garante que tem a coluna nome, se não tiver cria uma dummy
-        if 'PRODUTO_NOME' not in df.columns:
-             df['PRODUTO_NOME'] = df.iloc[:, 0].astype(str)
-
-        return df
+            st.error("Falha ao carregar clientes.")
+            return pd.DataFrame()
     except Exception as e:
-        return None
+        return pd.DataFrame()
 
-# --- MOTOR DE SUGESTÃO (INTELIGÊNCIA DE VENDAS JANEIRO) ---
-def gerar_sugestoes_janeiro(area_atuacao, df_produtos):
-    """
-    Cruza Área de Atuação com Palavras-Chave de Produtos para Janeiro.
-    """
-    if df_produtos is None or df_produtos.empty:
-        return [], "Sem catálogo carregado."
+def carregar_campanha_ativa(token):
+    """Busca a campanha de vendas ativa para orientar a IA"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        url = f"{DIRECTUS_URL}/items/campanhas_vendas?filter[ativa][_eq]=true&limit=1"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200 and response.json()['data']:
+            return response.json()['data'][0]
+    except:
+        pass
+    return None
 
-    # Regras de Negócio: Área -> Palavras Chave
-    regras_janeiro = {
-        'EDUCACIONAL': ['PAPEL', 'CANETA', 'CADERNO', 'ESCOLA', 'LÁPIS', 'SULFITE', 'RESMA', 'TINTA', 'APAGADOR'],
-        'ESCOLA': ['PAPEL', 'CANETA', 'CADERNO', 'ESCOLA', 'LÁPIS', 'SULFITE', 'RESMA'],
-        'INDÚSTRIA': ['EPI', 'LUVA', 'OCULOS', 'CAPACETE', 'FERRAMENTA', 'FITA', 'ADHESIVO', 'MANUTENCAO', 'SOLDA', 'ABRASIVO'],
-        'INDUSTRIA': ['EPI', 'LUVA', 'OCULOS', 'CAPACETE', 'FERRAMENTA', 'FITA', 'ADHESIVO', 'MANUTENCAO'],
-        'SAÚDE': ['LUVA', 'MASCARA', 'HIGIENE', 'ALCOOL', 'DESCARTAVEL', 'SERINGA', 'GAZE', 'LENÇOL'],
-        'FARMÁCIA': ['SOLAR', 'HIDRATANTE', 'VITAMINA', 'VERAO', 'REPELENTE'],
-        'FARMACIA': ['SOLAR', 'HIDRATANTE', 'VITAMINA', 'VERAO', 'REPELENTE'],
-        'TRANSPORTE': ['OLEO', 'PNEU', 'MANUTENCAO', 'LIMPEZA', 'AUTOMOTIVO', 'GRAXA', 'LUBRIFICANTE'],
-        'LOGÍSTICA': ['FITA', 'ESTILETE', 'EMBALAGEM', 'PLASTICO', 'PALETE', 'STRETCH'],
-        'COMÉRCIO': ['BOBINA', 'EMBALAGEM', 'SACOLA', 'ETIQUETA', 'PREÇO'],
-        'SERVIÇOS': ['CAFE', 'COPO', 'LIMPEZA', 'PAPEL', 'ESCRITORIO', 'HIGIENE']
+def salvar_config_smtp(token, host, port, user, password, assinatura):
+    """Salva/Atualiza as credenciais SMTP do vendedor no Directus"""
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    
+    # 1. Verifica se já existe config para este usuário
+    # Assumindo que o usuário logado só vê a sua config via permissão do Directus
+    check = requests.get(f"{DIRECTUS_URL}/items/config_smtp", headers=headers)
+    
+    payload = {
+        "smtp_host": host,
+        "smtp_port": int(port),
+        "smtp_user": user,
+        "smtp_pass_app": password, # Idealmente criptografar, mas estamos enviando via HTTPS
+        "assinatura_html": assinatura
     }
-
-    area_upper = str(area_atuacao).upper()
-    keywords = []
-
-    # Tenta dar match na área
-    matched_key = "Geral"
-    for key, words in regras_janeiro.items():
-        if key in area_upper:
-            keywords = words
-            matched_key = key
-            break
     
-    # Se não achou regra específica, usa regra geral de Janeiro
-    if not keywords:
-        keywords = ['PAPEL', 'VERAO', 'VENTILADOR', 'AGUA', 'ORGANIZADOR', 'OFERTA']
-        matched_key = "Geral (Janeiro)"
-
-    # Filtra o DataFrame de Produtos
-    mask = df_produtos['PRODUTO_NOME'].astype(str).str.upper().apply(lambda x: any(k in x for k in keywords))
-    df_sugestao = df_produtos[mask].head(6) 
-    
-    lista_skus = []
-    if not df_sugestao.empty:
-        for _, row in df_sugestao.iterrows():
-            nome = row['PRODUTO_NOME']
-            sku = row.get('SKU', '-')
-            if str(sku) != '-' and str(sku) != 'nan':
-                 lista_skus.append(f"📦 <b>{sku}</b> - {nome}")
-            else:
-                 lista_skus.append(f"📦 {nome}")
+    if check.status_code == 200 and len(check.json()['data']) > 0:
+        # Atualiza (PATCH)
+        item_id = check.json()['data'][0]['id']
+        requests.patch(f"{DIRECTUS_URL}/items/config_smtp/{item_id}", json=payload, headers=headers)
     else:
-        lista_skus.append("⚠️ Nenhum produto específico encontrado para esta área na lista de Mais Pedidos.")
+        # Cria (POST)
+        requests.post(f"{DIRECTUS_URL}/items/config_smtp", json=payload, headers=headers)
 
-    motivo = f"Foco em produtos de <b>{matched_key}</b> (Sazonalidade Janeiro)."
-    return lista_skus, motivo
+def pegar_config_smtp(token):
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = requests.get(f"{DIRECTUS_URL}/items/config_smtp", headers=headers)
+        if resp.status_code == 200 and resp.json()['data']:
+            return resp.json()['data'][0]
+    except:
+        return None
+    return None
 
-# --- SIDEBAR & UPLOAD ---
-st.sidebar.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
-st.sidebar.markdown("---")
-
-arquivo_carregado = None
-produtos_carregado = None
-
-# Upload Clientes
-st.sidebar.subheader("1. Base de Clientes")
-if os.path.exists(CACHE_FILE):
-    st.sidebar.success("✅ Clientes carregados!")
-    if st.sidebar.button("🗑️ Trocar Lista Clientes"):
-        try:
-            os.remove(CACHE_FILE)
-            carregar_excel.clear() 
-            st.rerun()
-        except: pass
-    arquivo_carregado = CACHE_FILE
-else:
-    uploaded_file = st.sidebar.file_uploader("📂 Importar Planilha Clientes (.xlsx)", type=["xlsx"], key="up_cli")
-    if uploaded_file:
-        with open(CACHE_FILE, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        carregar_excel.clear() 
-        st.rerun()
-
-# Upload Produtos (Mais Pedidos)
-st.sidebar.markdown("---")
-st.sidebar.subheader("2. Tabela Mais Pedidos")
-if os.path.exists(PRODUTOS_FILE):
-    st.sidebar.success("✅ Produtos carregados!")
-    if st.sidebar.button("🗑️ Trocar Tabela Produtos"):
-        try:
-            os.remove(PRODUTOS_FILE)
-            carregar_produtos_sugestao.clear()
-            st.rerun()
-        except: pass
-    produtos_carregado = PRODUTOS_FILE
-else:
-    uploaded_prod = st.sidebar.file_uploader("📂 Importar Mais Pedidos (.csv/.xlsx)", type=["xlsx", "csv"], key="up_prod")
-    if uploaded_prod:
-        # Salva como CSV padronizado
-        if uploaded_prod.name.endswith('.csv'):
-            with open(PRODUTOS_FILE, "wb") as f:
-                f.write(uploaded_prod.getbuffer())
-        else:
-            df_temp = pd.read_excel(uploaded_prod)
-            df_temp.to_csv(PRODUTOS_FILE, index=False)
-            
-        carregar_produtos_sugestao.clear()
-        st.rerun()
-
-if not arquivo_carregado:
-    st.info("👆 Por favor, comece importando a planilha de CLIENTES na barra lateral.")
-    st.stop()
-
-# --- CARGA DOS DADOS ---
-df_raw = carregar_excel(arquivo_carregado)
-df_produtos = carregar_produtos_sugestao(produtos_carregado) if produtos_carregado else None
-
-if df_raw is None or df_raw.empty:
-    st.error("Erro ao ler o arquivo de clientes.")
-    st.stop()
-
-if 'cnpj' in df_raw.columns:
-    df_raw['cnpj'] = df_raw['cnpj'].astype(str).str.replace(r'\.0$', '', regex=True)
-else:
-    df_raw['cnpj'] = "-"
-
-# Merge com CRM Local
-df_crm = carregar_crm_db()
-
-# Garante que tipos de dados sejam strings para o merge
-if 'email_1' in df_crm.columns: df_crm['email_1'] = df_crm['email_1'].astype(str).replace('nan', '')
-if 'telefone_1' in df_crm.columns: df_crm['telefone_1'] = df_crm['telefone_1'].astype(str).replace('nan', '')
-
-# Merge com sufixos
-df_full = pd.merge(df_raw, df_crm, on='pj_id', how='left', suffixes=('', '_crm'))
-
-# LÓGICA DE PRIORIDADE: CRM (editado) sobrescreve Planilha
-if 'email_1_crm' in df_full.columns:
-    df_full['email_1'] = df_full['email_1_crm'].combine_first(df_full['email_1'])
-
-if 'telefone_1_crm' in df_full.columns:
-    df_full['telefone_1'] = df_full['telefone_1_crm'].combine_first(df_full['telefone_1'])
-
-# Remove colunas auxiliares
-cols_to_drop = [c for c in df_full.columns if c.endswith('_crm')]
-df_full.drop(columns=cols_to_drop, inplace=True)
-
-# Preenche vazios
-df_full['status_venda'] = df_full['status_venda'].fillna('Não contatado')
-df_full['ja_ligou'] = df_full['ja_ligou'].fillna(False)
-df_full['obs'] = df_full['obs'].fillna('')
-if 'gap_1_2' not in df_full.columns: df_full['gap_1_2'] = ""
-if 'gap_2_3' not in df_full.columns: df_full['gap_2_3'] = ""
-
-for col in ['data_tentativa_1', 'data_tentativa_2', 'data_tentativa_3']:
-    if col in df_full.columns:
-        df_full[col] = pd.to_datetime(df_full[col], errors='coerce')
-
-# --- DASHBOARD ---
-st.title("🦅 Visão Geral - Carteira")
-
-c1, c2, c3 = st.columns(3)
-cat = c1.multiselect("Categoria", df_full['Categoria_Cliente'].unique(), default=df_full['Categoria_Cliente'].unique())
-sts = c2.multiselect("Status", df_full['status_venda'].unique(), default=df_full['status_venda'].unique())
-
-with c3:
-    todas_areas_opcoes = df_full['area_atuacao_nome'].unique()
-    usar_todas = st.checkbox("Selecionar Todas as Áreas", value=True)
-    if usar_todas:
-        area = todas_areas_opcoes
-        st.multiselect("Área", options=todas_areas_opcoes, default=todas_areas_opcoes, disabled=True)
-    else:
-        area = st.multiselect("Área", options=todas_areas_opcoes, default=todas_areas_opcoes)
-
-df_view = df_full[
-    (df_full['Categoria_Cliente'].isin(cat)) & 
-    (df_full['status_venda'].isin(sts)) &
-    (df_full['area_atuacao_nome'].isin(area))
-].copy()
-
-if 'dias_sem_compra' in df_view.columns:
-    df_view = df_view.sort_values(by='dias_sem_compra', ascending=True)
-
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Total Visível", len(df_view))
-k2.metric("Oportunidades (Inativos)", len(df_view[df_view['Categoria_Cliente'].str.contains('Inativo', na=False)]))
-k3.metric("Pendentes de Contato", len(df_view[df_view['status_venda'] == 'Não contatado']))
-k4.metric("Em Negociação", len(df_view[df_view['status_venda'] == 'Em Negociação']))
-
-st.divider()
-
-# --- PREPARAR DADOS PARA ATUALIZAÇÃO ---
-df_view['tel_clean'] = df_view['telefone_1'].apply(limpar_telefone)
-df_view['falta_telefone'] = df_view['tel_clean'].apply(lambda x: not x or len(x) < 8)
-df_view['falta_email'] = df_view['email_1'].apply(lambda x: not str(x) or str(x).lower() == 'nan' or '@' not in str(x))
-df_needs_update = df_view[(df_view['falta_telefone']) | (df_view['falta_email'])].copy()
+def registrar_log_envio(token, cliente_id, assunto, corpo, status):
+    """Registra no Directus que um e-mail foi enviado"""
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {
+        "cliente_pj_id": str(cliente_id), # Usando pj_id como referência visual
+        "assunto_gerado": assunto,
+        "corpo_email": corpo,
+        "status_envio": status,
+        "data_envio": datetime.now().isoformat()
+    }
+    requests.post(f"{DIRECTUS_URL}/items/historico_envios", json=payload, headers=headers)
 
 # =========================================================
-#  LADO A LADO: MODO DE ATAQUE (ESQUERDA) | MODO ATUALIZAÇÃO (DIREITA)
+#  IA GENERATIVA (GEMINI)
 # =========================================================
-col_left, col_right = st.columns([1, 1], gap="large")
-
-# --- COLUNA DA ESQUERDA: MODO DE ATAQUE ---
-with col_left:
-    st.subheader("🚀 Modo de Ataque (Vendas)")
+def gerar_email_ia(cliente_nome, ramo, data_compra, campanha_obj):
+    if not GEMINI_API_KEY:
+        return "Erro: Chave API Gemini não configurada.", "Erro"
     
-    df_view['label_select'] = df_view['razao_social'] + " (" + df_view['Ultima_Compra'] + ")"
-    opcoes_ataque = sorted(list(set(df_view['label_select'].tolist())))
+    campanha_nome = campanha_obj.get('nome_campanha', 'Retomada de Contato') if campanha_obj else "Contato Geral"
+    campanha_instrucao = campanha_obj.get('prompt_instrucao', 'Ofereça nossos produtos gerais.') if campanha_obj else "Ofereça o portfólio completo."
     
-    # Selectbox conectado ao session_state para receber trigger da tabela
-    selecionado = st.selectbox("Busque Cliente (Vendas):", ["Selecione..."] + opcoes_ataque, key="sel_ataque")
-
-    if selecionado and selecionado != "Selecione...":
-        try:
-            cliente = df_view[df_view['label_select'] == selecionado].iloc[0]
-            
-            dias = cliente['dias_sem_compra'] if cliente['dias_sem_compra'] < 9000 else 9999
-            area_cli = str(cliente['area_atuacao_nome'])
-            tel_raw = str(cliente['telefone_1'])
-            email_cliente = str(cliente['email_1']).strip()
-            obs_cliente = str(cliente['obs']).strip()
-            tel_clean = limpar_telefone(tel_raw)
-            
-            # --- DEFINIÇÃO INTELIGENTE DO SCRIPT DE E-MAIL (ATAQUE) ---
-            subject_mail = ""
-            body_mail = ""
-            
-            # 1. RECUPERAÇÃO (Inativos ou muito tempo sem compra)
-            if "Inativo" in str(cliente.get('Categoria_Cliente', '')) or dias > 180:
-                
-                # TRATAMENTO DO "(desde -)" - Se for traço, fica vazio
-                data_ult_compra = cliente['Ultima_Compra']
-                trecho_desde = f" (desde {data_ult_compra})" if data_ult_compra != '-' else ""
-                
-                subject_mail = f"{cliente['razao_social']}, novidades na Elo desde nosso último contato"
-                body_mail = f"""Olá, tudo bem?
-
-Estava revisando nossa carteira aqui na Elo e vi que faz um tempo que não falamos{trecho_desde}.
-
-Muita coisa mudou por aqui! Renovamos nosso portfólio com itens que estão em alta agora, como a Linha Térmica (Estilo Stanley) e opções Eco-Sustentáveis que muitas empresas do setor de {area_cli} estão pedindo.
-
-Gostaria de te enviar nosso catálogo atualizado de 2026 sem compromisso. Pode ser por aqui mesmo?
-
-Atenciosamente,"""
-                
-                # Script WPP Curto para a tela
-                script_msg = f"Olá! Tudo bem? Sou da Elo. Vi que sua última compra foi há {dias} dias. Temos condições especiais para retomada agora em Janeiro."
-
-            # 2. MANUTENÇÃO / CROSS-SELL (Ativos ou Recentes)
-            else:
-                subject_mail = f"Ideia para a {cliente['razao_social']}: Kits de Boas-vindas"
-                body_mail = f"""Oi, tudo bom?
-
-Vi que o último pedido aqui com a Elo foi em {cliente['Ultima_Compra']}.
-
-Queria te dar uma ideia: muitas empresas que compram material de escritório conosco estão montando Kits de Boas-vindas completos (Mochila + Caderno + Garrafa). Isso aumenta muito o engajamento do colaborador novo.
-
-Topa montar um Kit Onboarding conosco sem compromisso?
-
-Atenciosamente,"""
-                
-                # Script WPP Curto para a tela
-                if "Novo" in cliente['status_venda']:
-                    script_msg = f"Olá! Vi que vocês atuam com {area_cli} e gostaria de apresentar a Elo."
-                else:
-                    script_msg = f"Olá! Gostaria de falar sobre oportunidades de Janeiro para a área de {area_cli}."
-
-            sugestoes_skus, motivo_sugestao = gerar_sugestoes_janeiro(area_cli, df_produtos)
-            html_sugestoes = "".join([f"<div class='sku-item'>{sku}</div>" for sku in sugestoes_skus])
-
-            html_card = f"""
-    <div class="foco-card">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-    <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente['razao_social'][:25]}...</h2>
-    <span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cliente['pj_id']}</span>
-    </div>
-    <div class="foco-grid">
-    <div class="foco-item"><b>📍 Área</b>{cliente['area_atuacao_nome']}</div>
-    <div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
-    <div class="foco-item"><b>📧 Email</b>{email_cliente[:25]}...</div>
-    <div class="foco-item"><b>📅 Compra</b>{cliente['Ultima_Compra']}</div>
-    </div>
-    <div class="sugestao-box">
-    <div class="sugestao-title">🎯 Sugestão ({area_cli})</div>
-    <div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
-    {html_sugestoes}
-    </div>
-    <div class="script-box">
-    <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Vendas (WPP):</b>
-    "{script_msg}"
-    </div>
-    </div>
+    prompt = f"""
+    Aja como um vendedor consultivo B2B da Elo Brindes.
+    Escreva um e-mail curto (máximo 100 palavras) para o cliente '{cliente_nome}' do ramo '{ramo}'.
+    
+    Contexto:
+    - Última compra deles foi em: {data_compra if data_compra else 'Sem data registrada'}
+    - Campanha atual: {campanha_nome}
+    - Instrução da Campanha: {campanha_instrucao}
+    
+    Regras:
+    1. O assunto deve ser intrigante e curto.
+    2. O corpo deve ser HTML simples (use <p>, <br>, <b>).
+    3. NÃO coloque saudação genérica como "Prezado". Comece com "Olá {cliente_nome.split()[0].title()}" ou similar.
+    4. Termine convidando para uma resposta rápida.
+    5. Retorne a resposta no formato exato: ASSUNTO|CORPO_HTML
     """
-            st.markdown(html_card, unsafe_allow_html=True)
-            
-            b1, b2 = st.columns(2)
-            with b1:
-                if tel_clean and len(tel_clean) >= 10:
-                    link_wpp = f"https://wa.me/55{tel_clean}?text={script_msg.replace(' ', '%20')}"
-                    st.link_button(f"💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
-            with b2:
-                if email_cliente and "@" in email_cliente:
-                    # GERA O LINK DO GMAIL JÁ PREENCHIDO
-                    params = {
-                        "view": "cm", 
-                        "fs": "1", 
-                        "to": email_cliente, 
-                        "su": subject_mail, 
-                        "body": body_mail
-                    }
-                    link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
-                    st.link_button(f"📧 Gmail (Script Pronto)", link_gmail, use_container_width=True)
-        except Exception as e:
-            st.warning("Selecione um cliente válido para ver os detalhes.")
-
-# --- COLUNA DA DIREITA: MODO ATUALIZAÇÃO ---
-with col_right:
-    st.subheader("📝 Modo Atualização (Pendentes)")
     
-    if df_needs_update.empty:
-        st.success("✅ Nenhum cadastro pendente!")
-    else:
-        df_needs_update['label_select'] = df_needs_update['razao_social'] + " (Pendentes)"
-        opcoes_update = sorted(list(set(df_needs_update['label_select'].tolist())))
-        selecionado_up = st.selectbox("Selecione para Atualizar:", ["Selecione..."] + opcoes_update, key="sel_update")
-
-        if selecionado_up and selecionado_up != "Selecione...":
-            try:
-                cliente_up = df_needs_update[df_needs_update['label_select'] == selecionado_up].iloc[0]
-                
-                tel_raw = str(cliente_up['telefone_1'])
-                email_cliente = str(cliente_up['email_1']).strip()
-                obs_cliente = str(cliente_up['obs']).strip()
-                falta_tel = cliente_up['falta_telefone']
-                falta_email = cliente_up['falta_email']
-                
-                cor_tel = "color: #FFD700 !important; font-weight: bold;" if falta_tel else ""
-                cor_email = "color: #FFD700 !important; font-weight: bold;" if falta_email else ""
-                
-                script_msg_up = "Olá! Estamos atualizando os cadastros da sua empresa, precisa de algo para Janeiro?"
-
-                # --- SCRIPT DE E-MAIL PARA ATUALIZAÇÃO ---
-                subject_up = f"Atualização Cadastral - {cliente_up['razao_social']}"
-                body_up = f"""Bom dia, tudo bem?
-
-    Nós somos fornecedores especializados em brindes corporativos há 30 anos no mercado!.
-
-    Eu precisava falar com o responsável pelo Marketing ou Compras para atualizar um cadastro de fornecedor e apresentar nosso portfólio 2026.
-
-    Você saberia me dizer se é com você mesmo ou outra pessoa que cuida disso hoje?
-
-    Obrigado,"""
-
-                html_card_up = f"""
-    <div class="foco-card" style="border-left: 6px solid #FFD700;">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-    <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cliente_up['razao_social'][:25]}...</h2>
-    <span style='background:#555; padding:2px 6px; border-radius:4px; font-size:11px; color:#fff;'>ATUALIZAR</span>
-    </div>
-    <div class="foco-grid">
-    <div class="foco-item"><b>📍 Área</b>{cliente_up['area_atuacao_nome']}</div>
-    <div class="foco-item"><b>📋 CNPJ</b>{cliente_up['cnpj']}</div>
-    <div class="foco-item" style="{cor_tel}"><b>📞 Tel</b>{tel_raw if not falta_tel else "⚠️ PENDENTE"}</div>
-    <div class="foco-item" style="{cor_email}"><b>📧 Email</b>{email_cliente if not falta_email else "⚠️ PENDENTE"}</div>
-    </div>
-    <div class="foco-obs">
-    <b style="color:#999; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">📝 Obs:</b>
-    {obs_cliente if obs_cliente else "Nenhuma."}
-    </div>
-    <div class="script-box" style="border-left: 4px solid #FFD700;">
-    <b style="color:#FFD700; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script Atualização:</b>
-    "{script_msg_up}"
-    </div>
-    </div>
-    """
-                st.markdown(html_card_up, unsafe_allow_html=True)
-                
-                b1_up, b2_up = st.columns(2)
-                tel_clean_up = cliente_up['tel_clean']
-                with b1_up:
-                    if tel_clean_up and len(tel_clean_up) >= 10:
-                        link_wpp = f"https://wa.me/55{tel_clean_up}?text={script_msg_up.replace(' ', '%20')}"
-                        st.link_button(f"💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
-                with b2_up:
-                    if not falta_email:
-                        # GERA LINK DO GMAIL DE ATUALIZAÇÃO
-                        params_up = {
-                            "view": "cm", 
-                            "fs": "1", 
-                            "to": email_cliente, 
-                            "su": subject_up, 
-                            "body": body_up
-                        }
-                        link_gmail = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params_up)}"
-                        st.link_button(f"📧 Gmail (Script Atualização)", link_gmail, use_container_width=True)
-            except Exception as e:
-                pass
-
-# =========================================================
-#  PARTE INFERIOR: LISTA GERAL (SEMPRE VISÍVEL)
-# =========================================================
-st.divider()
-st.subheader("📋 Lista Geral de Clientes")
-
-# Configuração de Colunas do Data Editor
-col_config = {
-    "pj_id": st.column_config.TextColumn("ID", disabled=True),
-    "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
-    "cnpj": st.column_config.TextColumn("CNPJ", disabled=True),
-    "ABRIR": st.column_config.CheckboxColumn("Ver Ficha", default=False, width="small"),
-    "area_atuacao_nome": st.column_config.TextColumn("Área", disabled=True),
-    "email_1": st.column_config.TextColumn("E-mail", disabled=False),
-    "telefone_1": st.column_config.TextColumn("Telefone", disabled=False),
-    "Ultima_Compra": st.column_config.TextColumn("Última Compra", disabled=True),
-    "dias_sem_compra": st.column_config.NumberColumn("Dias Inativo", format="%d dias"),
-    "status_venda": st.column_config.SelectboxColumn(
-        "Status", 
-        options=['Não contatado', 'Tentando Contato', 'Em Negociação', 'Fechado', 'Perdido', 'Novo'], 
-        required=True
-    ),
-    "ja_ligou": st.column_config.CheckboxColumn("Ligou?"),
-    "obs": st.column_config.TextColumn("Obs", width="large"),
-    
-    # DATAS E GAPS
-    "data_tentativa_1": st.column_config.DateColumn("Tentativa 1", format="DD/MM/YYYY"),
-    "data_tentativa_2": st.column_config.DateColumn("Tentativa 2", format="DD/MM/YYYY"),
-    "data_tentativa_3": st.column_config.DateColumn("Tentativa 3", format="DD/MM/YYYY"),
-    "gap_1_2": st.column_config.TextColumn("Gap 1-2", help="Digite manualmente"),
-    "gap_2_3": st.column_config.TextColumn("Gap 2-3", help="Digite manualmente")
-}
-
-cols_display = [
-    'pj_id', 'razao_social', 'cnpj', 'ABRIR', 'status_venda', 
-    'data_tentativa_1', 'gap_1_2', 
-    'data_tentativa_2', 'gap_2_3', 
-    'data_tentativa_3',
-    'obs', 'telefone_1', 'Ultima_Compra', 'email_1', 'area_atuacao_nome'
-]
-
-# Força colunas de texto para serem string antes do editor
-cols_text_force = ['gap_1_2', 'gap_2_3', 'telefone_1', 'email_1']
-for col in cols_text_force:
-    if col in df_view.columns:
-        df_view[col] = df_view[col].astype(str).replace('nan', '')
-        df_view[col] = df_view[col].replace('None', '')
-
-# INSERE A COLUNA 'ABRIR' NO DATAFRAME VISUAL
-# Garante que seja False inicialmente para não ficar ticado
-df_view['ABRIR'] = False
-
-df_edit = st.data_editor(
-    df_view[cols_display], 
-    column_config=col_config, 
-    hide_index=True, 
-    use_container_width=True, 
-    key="editor_crm", 
-    height=500
-)
-
-# --- LÓGICA DE AÇÃO E AUTOSAVE ---
-
-# 1. VERIFICAR SE CLICOU NO BOTÃO "VER FICHA"
-rows_abrir = df_edit[df_edit['ABRIR'] == True]
-if not rows_abrir.empty:
-    target_row = rows_abrir.iloc[0]
-    
-    # Monta os labels compatíveis com os selectboxes
-    lbl_ataque = target_row['razao_social'] + " (" + target_row['Ultima_Compra'] + ")"
-    lbl_update = target_row['razao_social'] + " (Pendentes)"
-    
-    # ATUALIZA A VARIAVEL DE PONTE (não atualiza o widget direto para evitar erro)
-    st.session_state['pending_client_select'] = lbl_ataque
-    
-    # Verifica se esse cliente está na lista de update para não dar erro
-    if lbl_update in opcoes_update if 'opcoes_update' in locals() else []:
-        st.session_state['pending_update_select'] = lbl_update
+    try:
+        model = genai.GenerativeModel('gemini-pro')
+        response = model.generate_content(prompt)
+        texto = response.text.strip()
         
-    st.toast(f"Abrindo ficha: {target_row['razao_social']}...", icon="📂")
+        if "|" in texto:
+            assunto, corpo = texto.split("|", 1)
+            return assunto.strip(), corpo.strip()
+        else:
+            return "Oportunidade na Elo Brindes", texto
+            
+    except Exception as e:
+        return "Erro na IA", f"Não foi possível gerar. Erro: {str(e)}"
+
+# =========================================================
+#  MOTOR DE ENVIO (SMTP)
+# =========================================================
+def enviar_email_smtp(smtp_config, destinatario, assunto, corpo_html):
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = smtp_config['smtp_user']
+        msg['To'] = destinatario
+        msg['Subject'] = assunto
+        
+        # Anexa assinatura se tiver
+        assinatura = smtp_config.get('assinatura_html', '')
+        corpo_final = f"{corpo_html}<br><br>{assinatura}"
+        
+        msg.attach(MIMEText(corpo_final, 'html'))
+        
+        server = smtplib.SMTP(smtp_config['smtp_host'], smtp_config['smtp_port'])
+        server.starttls()
+        server.login(smtp_config['smtp_user'], smtp_config['smtp_pass_app'])
+        server.sendmail(smtp_config['smtp_user'], destinatario, msg.as_string())
+        server.quit()
+        return True, "Enviado"
+    except Exception as e:
+        return False, str(e)
+
+# =========================================================
+#  INTERFACE (STREAMLIT)
+# =========================================================
+
+# --- TELA DE LOGIN ---
+if 'token' not in st.session_state:
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
+        st.markdown("<h1 style='text-align: center; color: #E31937;'>🦅 NeuroSales CRM</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center;'>Acesse sua carteira exclusiva</p>", unsafe_allow_html=True)
+        
+        email = st.text_input("E-mail")
+        senha = st.text_input("Senha", type="password")
+        
+        if st.button("ENTRAR", use_container_width=True):
+            token, user_data = login_directus(email, senha)
+            if token:
+                st.session_state['token'] = token
+                st.session_state['user'] = user_data
+                st.rerun()
+            else:
+                st.error("Credenciais inválidas.")
+    st.stop()
+
+# --- DASHBOARD LOGADO ---
+user = st.session_state['user']
+token = st.session_state['token']
+
+# Sidebar
+with st.sidebar:
+    st.write(f"👤 **{user['first_name']} {user['last_name']}**")
+    st.caption(f"ID: {user['id']}")
     
-    # Rerun para que o topo do script leia a variavel de ponte e atualize o widget
-    time.sleep(0.3)
-    st.rerun()
+    if st.button("🚪 Sair"):
+        st.session_state.clear()
+        st.rerun()
+    
+    st.divider()
+    st.markdown("### ⚙️ Configuração SMTP")
+    with st.expander("Configurar E-mail"):
+        conf = pegar_config_smtp(token)
+        smtp_host = st.text_input("Host SMTP", value=conf['smtp_host'] if conf else "smtp.gmail.com")
+        smtp_port = st.number_input("Porta", value=conf['smtp_port'] if conf else 587)
+        smtp_user = st.text_input("Seu E-mail", value=conf['smtp_user'] if conf else "")
+        smtp_pass = st.text_input("Senha de App", type="password", value=conf['smtp_pass_app'] if conf else "")
+        assinatura = st.text_area("Assinatura HTML", value=conf['assinatura_html'] if conf else "<p>Att, Vendedor</p>")
+        
+        if st.button("Salvar Configuração"):
+            salvar_config_smtp(token, smtp_host, smtp_port, smtp_user, smtp_pass, assinatura)
+            st.success("Salvo!")
 
-# 2. VERIFICAR SE HOUVE EDIÇÃO DE DADOS (AUTO-SAVE)
-# Comparamos o df_edit (resultado) com o df_view (original carregado) removendo a coluna ABRIR
-dados_novos = df_edit.drop(columns=['ABRIR'])
-dados_originais = df_view[cols_display].drop(columns=['ABRIR'])
+# Carregar Dados
+df_clientes = carregar_clientes(token)
+campanha = carregar_campanha_ativa(token)
 
-# Se os dados forem diferentes, salva
-if not dados_novos.equals(dados_originais):
-    salvar_alteracoes(df_edit, df_crm)
-    st.toast("Alterações salvas automaticamente!", icon="✅")
+st.title(f"Painel de Vendas - {user['first_name']}")
 
+if df_clientes.empty:
+    st.info("👋 Olá! Sua carteira ainda está vazia ou não carregou. Fale com o administrador.")
+    st.stop()
 
-# --- RODAPÉ DE AÇÃO (APENAS EXPORTAR AGORA) ---
+# Métricas Topo
+k1, k2, k3 = st.columns(3)
+k1.markdown(f"<div class='metric-card'><h3>Total Carteira</h3><h1>{len(df_clientes)}</h1></div>", unsafe_allow_html=True)
+inativos_count = len(df_clientes[df_clientes['status_carteira'].astype(str).str.contains('Inativo|Frio', case=False, na=False)])
+k2.markdown(f"<div class='metric-card'><h3>Inativos/Frios</h3><h1 style='color:#E31937'>{inativos_count}</h1></div>", unsafe_allow_html=True)
+campanha_nome = campanha['nome_campanha'] if campanha else "Sem Campanha Ativa"
+k3.markdown(f"<div class='metric-card'><h3>Campanha Atual</h3><h4>{campanha_nome}</h4></div>", unsafe_allow_html=True)
+
 st.divider()
-c_export, _ = st.columns([1, 4])
 
-with c_export:
-    excel_data = converter_para_excel(df_edit)
-    st.download_button("📥 Baixar Tabela Completa", data=excel_data, file_name="EloFlow_Full.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+# Abas Principais
+tab1, tab2 = st.tabs(["🚀 Modo Ataque (Disparo IA)", "📋 Lista Completa"])
+
+# --- TAB 1: MODO ATAQUE ---
+with tab1:
+    st.subheader("Gerador de Oportunidades")
+    
+    # Filtros
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        filtro_status = st.multiselect("Filtrar Status:", df_clientes['status_carteira'].unique())
+    with col_f2:
+        filtro_ramo = st.multiselect("Filtrar Ramo:", df_clientes['area_atuacao'].unique())
+    
+    df_filtrado = df_clientes.copy()
+    if filtro_status:
+        df_filtrado = df_filtrado[df_filtrado['status_carteira'].isin(filtro_status)]
+    if filtro_ramo:
+        df_filtrado = df_filtrado[df_filtrado['area_atuacao'].isin(filtro_ramo)]
+        
+    st.dataframe(df_filtrado[['razao_social', 'email_1', 'status_carteira', 'data_ultima_compra']], use_container_width=True, hide_index=True)
+    
+    # Seleção para Disparo
+    st.markdown("### 📧 Preparar Disparo")
+    
+    # Selectbox dos clientes filtrados
+    clientes_opcoes = df_filtrado.set_index('id')['razao_social'].to_dict()
+    selecionados_ids = st.multiselect("Selecione os clientes para atacar agora:", options=clientes_opcoes.keys(), format_func=lambda x: clientes_opcoes[x])
+    
+    if selecionados_ids:
+        st.info(f"{len(selecionados_ids)} clientes selecionados.")
+        
+        # Botão Gerar IA
+        if st.button("✨ 1. Gerar Rascunhos com IA", type="primary"):
+            if not GEMINI_API_KEY:
+                st.error("Configure a API KEY do Gemini no código ou variáveis de ambiente.")
+            else:
+                rascunhos = []
+                progresso = st.progress(0)
+                
+                for i, c_id in enumerate(selecionados_ids):
+                    cli_data = df_clientes[df_clientes['id'] == c_id].iloc[0]
+                    assunto, corpo = gerar_email_ia(
+                        cli_data['razao_social'], 
+                        cli_data['area_atuacao'], 
+                        cli_data['data_ultima_compra'], 
+                        campanha
+                    )
+                    rascunhos.append({
+                        "id": c_id,
+                        "razao_social": cli_data['razao_social'],
+                        "email": cli_data['email_1'],
+                        "assunto": assunto,
+                        "corpo": corpo
+                    })
+                    progresso.progress((i + 1) / len(selecionados_ids))
+                
+                st.session_state['rascunhos_gerados'] = rascunhos
+                st.success("Rascunhos gerados! Revise abaixo.")
+
+    # Área de Revisão e Envio
+    if 'rascunhos_gerados' in st.session_state and st.session_state['rascunhos_gerados']:
+        st.divider()
+        st.subheader("📝 Revisão e Envio")
+        
+        # Mostra um preview editável do primeiro da lista (MVP simplificado)
+        # Numa versão completa, usaria um st.data_editor complexo
+        st.write("Exemplo do que será enviado:")
+        
+        for email_obj in st.session_state['rascunhos_gerados']:
+            with st.expander(f"✉️ {email_obj['razao_social']} ({email_obj['email']})"):
+                st.markdown(f"**Assunto:** {email_obj['assunto']}")
+                st.markdown(email_obj['corpo'], unsafe_allow_html=True)
+        
+        st.warning("⚠️ Certifique-se de ter configurado seu SMTP na barra lateral antes de enviar.")
+        
+        if st.button("🚀 2. Disparar Todos Agora"):
+            conf_smtp = pegar_config_smtp(token)
+            if not conf_smtp or not conf_smtp.get('smtp_pass_app'):
+                st.error("Configure seu E-mail SMTP na barra lateral primeiro!")
+            else:
+                bar_envio = st.progress(0)
+                log_status = []
+                
+                for i, item in enumerate(st.session_state['rascunhos_gerados']):
+                    if not item['email'] or "@" not in str(item['email']):
+                        log_status.append(f"❌ {item['razao_social']}: E-mail inválido")
+                        continue
+                        
+                    sucesso, msg = enviar_email_smtp(conf_smtp, item['email'], item['assunto'], item['corpo'])
+                    
+                    if sucesso:
+                        registrar_log_envio(token, df_clientes[df_clientes['id']==item['id']].iloc[0]['pj_id'], item['assunto'], item['corpo'], "Sucesso")
+                        log_status.append(f"✅ {item['razao_social']}: Enviado")
+                    else:
+                        registrar_log_envio(token, df_clientes[df_clientes['id']==item['id']].iloc[0]['pj_id'], item['assunto'], item['corpo'], f"Erro: {msg}")
+                        log_status.append(f"❌ {item['razao_social']}: Falha ({msg})")
+                    
+                    # Delay Humanizado Anti-Bloqueio
+                    time.sleep(random.uniform(5, 15))
+                    bar_envio.progress((i + 1) / len(st.session_state['rascunhos_gerados']))
+                
+                st.success("Processo finalizado!")
+                st.write(log_status)
+                del st.session_state['rascunhos_gerados']
+
+# --- TAB 2: LISTA COMPLETA ---
+with tab2:
+    st.dataframe(df_clientes)
