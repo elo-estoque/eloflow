@@ -62,6 +62,9 @@ st.markdown("""
         padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; font-size: 13px;
         border: 1px solid rgba(251, 191, 36, 0.2);
     }
+    /* Ajuste para multiselect dark */
+    span[data-baseweb="tag"] { background-color: #333 !important; }
+    
     section[data-testid="stSidebar"] { background-color: #111; border-right: 1px solid #333; }
 </style>
 """, unsafe_allow_html=True)
@@ -267,6 +270,30 @@ def config_smtp_crud(token, payload=None):
         if r.status_code == 200 and r.json()['data']: return r.json()['data'][0]
         return None
 
+# --- NOVA FUNÇÃO DE ENVIO SMTP ADICIONADA ---
+def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp):
+    if not conf_smtp: return False, "SMTP não configurado"
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = conf_smtp['smtp_user']
+        msg['To'] = destinatario
+        msg['Subject'] = assunto
+        
+        corpo_completo = mensagem_html.replace("\n", "<br>")
+        if conf_smtp.get('assinatura_html'):
+            corpo_completo += f"<br><br>{conf_smtp['assinatura_html']}"
+            
+        msg.attach(MIMEText(corpo_completo, 'html'))
+        
+        server = smtplib.SMTP(conf_smtp['smtp_host'], conf_smtp['smtp_port'])
+        server.starttls()
+        server.login(conf_smtp['smtp_user'], conf_smtp['smtp_pass_app'])
+        server.sendmail(conf_smtp['smtp_user'], destinatario, msg.as_string())
+        server.quit()
+        return True, "Enviado"
+    except Exception as e:
+        return False, str(e)
+
 def registrar_log(token, pj_id, assunto, corpo, status):
     try:
         base_url = DIRECTUS_URL.rstrip('/')
@@ -348,7 +375,7 @@ with st.sidebar:
         st.rerun()
     st.divider()
     with st.expander("⚙️ Configurar E-mail (SMTP)"):
-        st.info("Configuração opcional. O envio agora abre seu e-mail padrão.")
+        st.info("Necessário para o DISPARO EM MASSA.")
         conf = config_smtp_crud(token)
         h = st.text_input("Host", value=conf['smtp_host'] if conf else "smtp.gmail.com")
         p = st.number_input("Porta", value=conf['smtp_port'] if conf else 587)
@@ -402,6 +429,84 @@ if "editor_dados" in st.session_state:
                 if st.session_state.get("sb_principal") != cliente_alvo:
                     st.session_state["sb_principal"] = cliente_alvo
             except Exception: pass
+
+st.divider()
+
+# --- NOVO BLOCO: DISPARO EM MASSA ---
+with st.expander("📢 Disparo em Massa (Padrão para Vários Clientes)", expanded=False):
+    st.markdown("⚠️ **Atenção:** Esta função usa as configurações de SMTP da barra lateral. Clientes sem e-mail serão ignorados.")
+    
+    col_m1, col_m2 = st.columns([1, 1])
+    
+    with col_m1:
+        st.subheader("1. Selecione os Clientes")
+        # Filtra apenas quem tem email válido para exibir na lista
+        df_com_email = df_filtrado[df_filtrado['email_1'].str.contains('@', na=False)].copy()
+        lista_emails_validos = df_com_email['label_select'].tolist()
+        
+        container_botoes = st.container()
+        col_b1, col_b2 = container_botoes.columns(2)
+        if col_b1.button("Selecionar Todos (Filtrados)"):
+            st.session_state['selected_bulk'] = lista_emails_validos
+        if col_b2.button("Limpar Seleção"):
+            st.session_state['selected_bulk'] = []
+            
+        selecionados_bulk = st.multiselect(
+            "Clientes Destinatários:", 
+            options=lista_emails_validos,
+            key='selected_bulk'
+        )
+        st.caption(f"Total Selecionado: {len(selecionados_bulk)} clientes")
+
+    with col_m2:
+        st.subheader("2. Defina a Mensagem")
+        assunto_padrao = st.text_input("Assunto do E-mail", value=f"Novidades Elo Brindes - {campanha['nome_campanha'] if campanha else 'Especial'}")
+        corpo_padrao = st.text_area("Mensagem (Pode usar texto simples)", height=200, value=f"Olá,\n\nGostaria de apresentar as novidades da Elo Brindes para sua empresa.\n\nAguardo seu retorno.")
+        
+        if st.button("🚀 ENVIAR PARA TODOS SELECIONADOS", type="primary", use_container_width=True):
+            conf_smtp = config_smtp_crud(token)
+            if not conf_smtp or not conf_smtp.get('smtp_pass_app'):
+                st.error("Configure o SMTP na barra lateral primeiro!")
+            elif len(selecionados_bulk) == 0:
+                st.warning("Selecione pelo menos um cliente.")
+            else:
+                bar = st.progress(0)
+                status_txt = st.empty()
+                enviados = 0
+                erros = 0
+                
+                for i, nome_cliente in enumerate(selecionados_bulk):
+                    # Recupera dados do cliente
+                    cli_row = df_com_email[df_com_email['label_select'] == nome_cliente].iloc[0]
+                    email_dest = cli_row['email_1']
+                    
+                    status_txt.text(f"Enviando para {cli_row['razao_social']} ({email_dest})...")
+                    
+                    # Personalização básica no corpo (Opcional)
+                    msg_final = corpo_padrao.replace("{cliente}", cli_row['razao_social'])
+                    
+                    sucesso, msg_log = enviar_email_smtp(token, email_dest, assunto_padrao, msg_final, conf_smtp)
+                    
+                    if sucesso:
+                        enviados += 1
+                        # Tenta atualizar tentativa 1 se estiver vazio
+                        if not cli_row['tentativa_1']:
+                            atualizar_cliente_directus(token, cli_row['id'], {"tentativa_1": datetime.now().strftime("%d/%m - Email em Massa")})
+                    else:
+                        erros += 1
+                    
+                    # Delay para não bloquear SMTP
+                    time.sleep(1.5) 
+                    bar.progress((i + 1) / len(selecionados_bulk))
+                
+                status_txt.empty()
+                bar.empty()
+                if erros == 0:
+                    st.success(f"✅ Sucesso! {enviados} e-mails enviados.")
+                else:
+                    st.warning(f"⚠️ Finalizado. Enviados: {enviados}. Falhas: {erros}.")
+                time.sleep(2)
+                st.rerun()
 
 st.divider()
 
