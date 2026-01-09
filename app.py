@@ -16,6 +16,7 @@ import urllib3
 # --- 1. CONFIGURAÇÕES INICIAIS ---
 st.set_page_config(page_title="NeuroSales CRM", layout="wide", page_icon="🦅")
 
+# Ignorar avisos de SSL (necessário pois seu servidor não tem certificado válido)
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -62,7 +63,6 @@ st.markdown("""
         padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; font-size: 13px;
         border: 1px solid rgba(251, 191, 36, 0.2);
     }
-    /* Ajuste para multiselect dark */
     span[data-baseweb="tag"] { background-color: #333 !important; }
     
     section[data-testid="stSidebar"] { background-color: #111; border-right: 1px solid #333; }
@@ -80,7 +80,6 @@ if GEMINI_API_KEY:
 #  FUNÇÕES AUXILIARES E DE NEGÓCIO
 # =========================================================
 
-# --- CAÇADOR DE MODELO DINÂMICO ---
 @st.cache_resource
 def obter_modelo_compativel():
     if not GEMINI_API_KEY: return "gemini-pro"
@@ -135,7 +134,7 @@ def gerar_sugestoes_elo_brindes(area_atuacao):
         return ["🎁 Garrafa Térmica Personalizada", "🎁 Mochila Executiva", "🎁 Kit Tecnológico (Powerbank)"], "Sugestão Geral (Erro IA)"
 
 # =========================================================
-#  FUNÇÕES DE BACKEND
+#  FUNÇÕES DE BACKEND (COM CORREÇÕES DE SAVE)
 # =========================================================
 
 def login_directus_debug(email, password):
@@ -254,23 +253,47 @@ def carregar_campanha_ativa(token):
     except: pass
     return None
 
+# --- FUNÇÃO CONFIG_SMTP CORRIGIDA E ROBUSTA ---
 def config_smtp_crud(token, payload=None):
     base_url = DIRECTUS_URL.rstrip('/')
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     url = f"{base_url}/items/config_smtp"
+
     if payload:
+        # Tenta verificar se já existe configuração
         check = requests.get(url, headers=headers, verify=False)
-        if check.status_code == 200 and len(check.json()['data']) > 0:
-            requests.patch(f"{url}/{check.json()['data'][0]['id']}", json=payload, headers=headers, verify=False)
+        
+        # Se falhar na leitura, avisa
+        if check.status_code != 200:
+            st.error(f"❌ Erro ao acessar configurações no banco: {check.text}")
+            return False
+
+        data = check.json().get('data', [])
+        
+        if len(data) > 0:
+            # ATUALIZA (PATCH)
+            id_item = data[0]['id']
+            r = requests.patch(f"{url}/{id_item}", json=payload, headers=headers, verify=False)
+            if r.status_code == 200:
+                return True
+            else:
+                st.error(f"❌ Erro ao salvar (PATCH). Verifique permissões: {r.text}")
+                return False
         else:
-            requests.post(url, json=payload, headers=headers, verify=False)
-        return True
+            # CRIA (POST)
+            r = requests.post(url, json=payload, headers=headers, verify=False)
+            if r.status_code == 200:
+                return True
+            else:
+                st.error(f"❌ Erro ao criar (POST). Verifique permissões: {r.text}")
+                return False
     else:
+        # APENAS LEITURA
         r = requests.get(url, headers=headers, verify=False)
-        if r.status_code == 200 and r.json()['data']: return r.json()['data'][0]
+        if r.status_code == 200 and r.json().get('data'): 
+            return r.json()['data'][0]
         return None
 
-# --- NOVA FUNÇÃO DE ENVIO SMTP ADICIONADA ---
 def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp):
     if not conf_smtp: return False, "SMTP não configurado"
     try:
@@ -287,6 +310,7 @@ def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp):
         
         server = smtplib.SMTP(conf_smtp['smtp_host'], conf_smtp['smtp_port'])
         server.starttls()
+        # Aqui é onde ocorre o login com a senha de app
         server.login(conf_smtp['smtp_user'], conf_smtp['smtp_pass_app'])
         server.sendmail(conf_smtp['smtp_user'], destinatario, msg.as_string())
         server.quit()
@@ -366,6 +390,7 @@ nome_usuario = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip
 primeiro_nome = user.get('first_name', '').strip().lower()
 cargo_usuario = "Vendedora" if primeiro_nome.endswith("a") else "Vendedor"
 
+# --- SIDEBAR (BARRA LATERAL) CORRIGIDA ---
 with st.sidebar:
     st.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
     st.write(f"👤 **{nome_usuario}**")
@@ -374,18 +399,41 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
     st.divider()
+    
     with st.expander("⚙️ Configurar E-mail (SMTP)"):
         st.info("Necessário para o DISPARO EM MASSA.")
         conf = config_smtp_crud(token)
+        
+        # Carrega dados atuais do banco
         h = st.text_input("Host", value=conf['smtp_host'] if conf else "smtp.gmail.com")
         p = st.number_input("Porta", value=conf['smtp_port'] if conf else 587)
         u = st.text_input("Email", value=conf['smtp_user'] if conf else "")
-        pw = st.text_input("Senha App", type="password", value=conf['smtp_pass_app'] if conf else "")
+        
+        # Campo de senha com aviso importante
+        pw_val = conf['smtp_pass_app'] if conf else ""
+        pw = st.text_input("Senha App (Não use senha de login)", type="password", value=pw_val, help="Para Gmail, crie uma Senha de App em: Gerenciar Conta > Segurança > Verificação em 2 etapas > Senhas de App.")
+        
         ass = st.text_area("Assinatura HTML", value=conf['assinatura_html'] if conf else "")
-        if st.button("Salvar Config"):
-            payload = {"smtp_host": h, "smtp_port": int(p), "smtp_user": u, "smtp_pass_app": pw, "assinatura_html": ass}
-            config_smtp_crud(token, payload)
-            st.success("Salvo!")
+        
+        if st.button("Salvar Configuração", type="primary"):
+            if not u or not pw:
+                st.warning("Preencha E-mail e Senha.")
+            else:
+                payload = {
+                    "smtp_host": h, 
+                    "smtp_port": int(p), 
+                    "smtp_user": u, 
+                    "smtp_pass_app": pw, 
+                    "assinatura_html": ass
+                }
+                # Chama a função de salvar
+                salvou = config_smtp_crud(token, payload)
+                if salvou:
+                    st.success("✅ Salvo com sucesso! Recarregando...")
+                    time.sleep(1.5)
+                    st.rerun() # <--- FORÇA O RECARREGAMENTO DA PÁGINA
+
+# --- CORPO PRINCIPAL ---
 
 df = carregar_clientes(token)
 campanha = carregar_campanha_ativa(token)
@@ -432,15 +480,14 @@ if "editor_dados" in st.session_state:
 
 st.divider()
 
-# --- NOVO BLOCO: DISPARO EM MASSA ---
+# --- BLOCO: DISPARO EM MASSA ---
 with st.expander("📢 Disparo em Massa (Padrão para Vários Clientes)", expanded=False):
-    st.markdown("⚠️ **Atenção:** Esta função usa as configurações de SMTP da barra lateral. Clientes sem e-mail serão ignorados.")
+    st.markdown("⚠️ **Atenção:** Certifique-se de que configurou e salvou o SMTP na barra lateral antes de enviar.")
     
     col_m1, col_m2 = st.columns([1, 1])
     
     with col_m1:
         st.subheader("1. Selecione os Clientes")
-        # Filtra apenas quem tem email válido para exibir na lista
         df_com_email = df_filtrado[df_filtrado['email_1'].str.contains('@', na=False)].copy()
         lista_emails_validos = df_com_email['label_select'].tolist()
         
@@ -464,9 +511,11 @@ with st.expander("📢 Disparo em Massa (Padrão para Vários Clientes)", expand
         corpo_padrao = st.text_area("Mensagem (Pode usar texto simples)", height=200, value=f"Olá,\n\nGostaria de apresentar as novidades da Elo Brindes para sua empresa.\n\nAguardo seu retorno.")
         
         if st.button("🚀 ENVIAR PARA TODOS SELECIONADOS", type="primary", use_container_width=True):
+            # Recarrega a configuração na hora do clique para garantir que está atualizada
             conf_smtp = config_smtp_crud(token)
+            
             if not conf_smtp or not conf_smtp.get('smtp_pass_app'):
-                st.error("Configure o SMTP na barra lateral primeiro!")
+                st.error("🚨 Configure o SMTP na barra lateral e clique em SALVAR primeiro!")
             elif len(selecionados_bulk) == 0:
                 st.warning("Selecione pelo menos um cliente.")
             else:
@@ -474,39 +523,46 @@ with st.expander("📢 Disparo em Massa (Padrão para Vários Clientes)", expand
                 status_txt = st.empty()
                 enviados = 0
                 erros = 0
+                log_erros = []
                 
                 for i, nome_cliente in enumerate(selecionados_bulk):
-                    # Recupera dados do cliente
                     cli_row = df_com_email[df_com_email['label_select'] == nome_cliente].iloc[0]
                     email_dest = cli_row['email_1']
                     
                     status_txt.text(f"Enviando para {cli_row['razao_social']} ({email_dest})...")
                     
-                    # Personalização básica no corpo (Opcional)
+                    # Substituição simples de variável no texto
                     msg_final = corpo_padrao.replace("{cliente}", cli_row['razao_social'])
                     
                     sucesso, msg_log = enviar_email_smtp(token, email_dest, assunto_padrao, msg_final, conf_smtp)
                     
                     if sucesso:
                         enviados += 1
-                        # Tenta atualizar tentativa 1 se estiver vazio
+                        # Atualiza tentativa se estiver vazio
                         if not cli_row['tentativa_1']:
                             atualizar_cliente_directus(token, cli_row['id'], {"tentativa_1": datetime.now().strftime("%d/%m - Email em Massa")})
                     else:
                         erros += 1
+                        log_erros.append(f"{cli_row['razao_social']}: {msg_log}")
                     
-                    # Delay para não bloquear SMTP
-                    time.sleep(1.5) 
+                    time.sleep(1.0) # Delay para evitar bloqueio SMTP
                     bar.progress((i + 1) / len(selecionados_bulk))
                 
                 status_txt.empty()
                 bar.empty()
-                if erros == 0:
-                    st.success(f"✅ Sucesso! {enviados} e-mails enviados.")
-                else:
-                    st.warning(f"⚠️ Finalizado. Enviados: {enviados}. Falhas: {erros}.")
-                time.sleep(2)
-                st.rerun()
+                
+                if enviados > 0:
+                    st.success(f"✅ Processo finalizado! {enviados} e-mails enviados com sucesso.")
+                
+                if erros > 0:
+                    st.error(f"❌ Ocorreram {erros} erros de envio.")
+                    with st.expander("Ver detalhes dos erros"):
+                        for erro in log_erros:
+                            st.write(erro)
+                
+                if erros == 0 and enviados > 0:
+                    time.sleep(2)
+                    st.rerun()
 
 st.divider()
 
@@ -600,7 +656,7 @@ with col_left:
                 subject_enc = urllib.parse.quote(res['subj'])
                 body_enc = urllib.parse.quote(corpo_final)
                 
-                # --- ALTERADO AQUI PARA GOOGLE WORKSPACE/GMAIL ---
+                # --- LINK PARA GOOGLE WORKSPACE/GMAIL ---
                 link_gmail_final = f"https://mail.google.com/mail/?view=cm&fs=1&to={res['email']}&su={subject_enc}&body={body_enc}"
                 
                 st.link_button("📧 Abrir no Gmail", link_gmail_final, type="primary", use_container_width=True)
@@ -677,14 +733,12 @@ if not df_filtrado.empty:
         num_rows="fixed"
     )
 
-    # --- LÓGICA DE AUTO-SAVE (GARANTE QUE SALVA SEM BOTÃO) ---
+    # --- LÓGICA DE AUTO-SAVE ---
     if "editor_dados" in st.session_state and st.session_state["editor_dados"]["edited_rows"]:
         alteracoes = st.session_state["editor_dados"]["edited_rows"]
         
-        # Filtra se é uma edição real ou só clique na "Ação"
         tem_edicao_real = False
         for idx, mudanca in alteracoes.items():
-            # Se tem alguma chave que NÃO seja 'Ação', é uma edição de dado
             if any(k != "Ação" for k in mudanca.keys()):
                 tem_edicao_real = True
                 break
@@ -694,7 +748,6 @@ if not df_filtrado.empty:
             erros = 0
             
             for i, mudancas in alteracoes.items():
-                # Remove colunas calculadas ou de controle antes de enviar
                 dados_limpos = {k: v for k, v in mudancas.items() if k not in ['GAP (dias)', 'Ultima_Compra', 'Categoria_Cliente', 'label_select', 'data_temp', 'dias_sem_compra', 'pendente', 'Ação']}
                 
                 if dados_limpos:
@@ -708,9 +761,6 @@ if not df_filtrado.empty:
                         erros += 1
             
             if sucessos > 0:
-                st.toast(f"✅ {sucessos} alterações salvas automaticamente no banco!", icon="💾")
-                time.sleep(1) # Delay para dar tempo de ler o toast
-                st.rerun() # RECARREGA A PÁGINA PARA TRAVAR A MUDANÇA (PERSISTÊNCIA GARANTIDA)
-
-else:
-    st.write("Nenhum dado para exibir com os filtros atuais.")
+                st.toast(f"✅ {sucessos} alterações salvas automaticamente!", icon="💾")
+                time.sleep(1) 
+                st.rerun()
