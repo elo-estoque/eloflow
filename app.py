@@ -175,7 +175,7 @@ def carregar_clientes(token):
     base_url = DIRECTUS_URL.rstrip('/')
     headers = {"Authorization": f"Bearer {token}"}
     
-    # ADICIONADO status_prospect na chamada da API
+    # CAMPOS
     fields_full = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,tentativa_1,tentativa_2,tentativa_3,status_prospect"
     fields_safe = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,status_prospect"
     
@@ -204,7 +204,6 @@ def carregar_clientes(token):
             hoje = pd.Timestamp.now()
             df['dias_sem_compra'] = (hoje - df['data_temp']).dt.days.fillna(9999).astype(int)
             
-            # Garante que a coluna nova existe no DF mesmo se vier vazia
             if 'status_prospect' not in df.columns:
                 df['status_prospect'] = None
             
@@ -264,7 +263,6 @@ def config_smtp_crud(token, payload=None):
     url = f"{base_url}/items/config_smtp"
 
     if payload:
-        # Tenta verificar se já existe configuração
         try:
             check = requests.get(url, headers=headers, verify=False)
         except Exception as e:
@@ -278,7 +276,6 @@ def config_smtp_crud(token, payload=None):
         data = check.json().get('data', [])
         
         if len(data) > 0:
-            # ATUALIZA (PATCH)
             id_item = data[0]['id']
             r = requests.patch(f"{url}/{id_item}", json=payload, headers=headers, verify=False)
             if r.status_code == 200:
@@ -287,7 +284,6 @@ def config_smtp_crud(token, payload=None):
                 st.error(f"❌ Erro ao salvar (PATCH). O Directus recusou: {r.text}")
                 return False
         else:
-            # CRIA (POST)
             r = requests.post(url, json=payload, headers=headers, verify=False)
             if r.status_code == 200:
                 return True
@@ -295,7 +291,6 @@ def config_smtp_crud(token, payload=None):
                 st.error(f"❌ Erro ao criar (POST). O Directus recusou: {r.text}")
                 return False
     else:
-        # APENAS LEITURA
         try:
             r = requests.get(url, headers=headers, verify=False)
             if r.status_code == 200 and r.json().get('data'): 
@@ -311,7 +306,6 @@ def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp):
         msg['To'] = destinatario
         msg['Subject'] = assunto
         
-        # --- LÓGICA INTELIGENTE DE HTML/TEXTO ---
         if "<div" in mensagem_html or "<html" in mensagem_html or "<span" in mensagem_html or "<table" in mensagem_html or "<a href" in mensagem_html:
             corpo_completo = mensagem_html
         else:
@@ -403,7 +397,7 @@ nome_usuario = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip
 primeiro_nome = user.get('first_name', '').strip().lower()
 cargo_usuario = "Vendedora" if primeiro_nome.endswith("a") else "Vendedor"
 
-# --- SIDEBAR (BARRA LATERAL) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
     st.write(f"👤 **{nome_usuario}**")
@@ -417,14 +411,12 @@ with st.sidebar:
         st.info("Necessário para o DISPARO EM MASSA.")
         conf = config_smtp_crud(token)
         
-        # Carrega dados atuais do banco
         h = st.text_input("Host", value=conf['smtp_host'] if conf else "smtp.gmail.com")
         p = st.number_input("Porta", value=conf['smtp_port'] if conf else 587)
         u = st.text_input("Email", value=conf['smtp_user'] if conf else "")
         
-        # Campo de senha com aviso importante
         pw_val = conf['smtp_pass_app'] if conf else ""
-        pw = st.text_input("Senha App (Não use senha de login)", type="password", value=pw_val, help="Para Gmail, crie uma Senha de App em: Gerenciar Conta > Segurança > Verificação em 2 etapas > Senhas de App.")
+        pw = st.text_input("Senha App (Não use senha de login)", type="password", value=pw_val, help="Para Gmail, crie uma Senha de App.")
         
         ass = st.text_area("Assinatura HTML", value=conf['assinatura_html'] if conf else "")
         
@@ -439,12 +431,11 @@ with st.sidebar:
                     "smtp_pass_app": pw, 
                     "assinatura_html": ass
                 }
-                # Chama a função de salvar
                 salvou = config_smtp_crud(token, payload)
                 if salvou:
                     st.success("✅ Salvo com sucesso! Recarregando...")
                     time.sleep(1.5)
-                    st.rerun() # <--- FORÇA O RECARREGAMENTO DA PÁGINA
+                    st.rerun()
 
 # --- CORPO PRINCIPAL ---
 
@@ -462,14 +453,26 @@ inativos = len(df[df['Categoria_Cliente'].astype(str).str.contains('Inativo|Frio
 k2.markdown(f"<div class='metric-card'><h3>Oportunidades (Inativos/Crít.)</h3><h1 style='color:#E31937'>{inativos}</h1></div>", unsafe_allow_html=True)
 k3.markdown(f"<div class='metric-card'><h3>Campanha</h3><h4>{campanha['nome_campanha'] if campanha else 'Nenhuma'}</h4></div>", unsafe_allow_html=True)
 
+# --- FILTROS GLOBAIS COM SELECIONAR TODOS (ALTERADO AQUI) ---
 st.markdown("### 🔍 Filtros Globais")
 c_f1, c_f2 = st.columns(2)
 with c_f1:
     opcoes_status = sorted(list(df['Categoria_Cliente'].unique()))
-    filtro_status = st.multiselect("Filtrar por Status (Carteira):", options=opcoes_status, default=opcoes_status)
+    # Checkbox para Selecionar Todos os Status
+    todos_status = st.checkbox("Todos os Status", value=True)
+    if todos_status:
+        filtro_status = st.multiselect("Filtrar por Status (Carteira):", options=opcoes_status, default=opcoes_status)
+    else:
+        filtro_status = st.multiselect("Filtrar por Status (Carteira):", options=opcoes_status)
+
 with c_f2:
     opcoes_area = sorted([str(x) for x in df['area_atuacao'].unique() if x is not None])
-    filtro_area = st.multiselect("Filtrar por Área de Atuação:", options=opcoes_area, default=opcoes_area)
+    # Checkbox para Selecionar Todas as Áreas
+    todas_areas = st.checkbox("Todas as Áreas", value=True)
+    if todas_areas:
+        filtro_area = st.multiselect("Filtrar por Área de Atuação:", options=opcoes_area, default=opcoes_area)
+    else:
+        filtro_area = st.multiselect("Filtrar por Área de Atuação:", options=opcoes_area)
 
 df_filtrado = df.copy()
 if filtro_status:
@@ -526,7 +529,6 @@ with st.expander("📢 Disparo em Massa (Padrão para Vários Clientes)", expand
         corpo_padrao = st.text_area("Mensagem ou Código HTML", height=300, value=f"Olá,\n\nGostaria de apresentar as novidades da Elo Brindes para sua empresa.\n\nAguardo seu retorno.")
         
         if st.button("🚀 ENVIAR PARA TODOS SELECIONADOS", type="primary", use_container_width=True):
-            # Recarrega a configuração na hora do clique para garantir que está atualizada
             conf_smtp = config_smtp_crud(token)
             
             if not conf_smtp or not conf_smtp.get('smtp_pass_app'):
@@ -546,21 +548,19 @@ with st.expander("📢 Disparo em Massa (Padrão para Vários Clientes)", expand
                     
                     status_txt.text(f"Enviando para {cli_row['razao_social']} ({email_dest})...")
                     
-                    # Substituição simples de variável no texto
                     msg_final = corpo_padrao.replace("{cliente}", cli_row['razao_social'])
                     
                     sucesso, msg_log = enviar_email_smtp(token, email_dest, assunto_padrao, msg_final, conf_smtp)
                     
                     if sucesso:
                         enviados += 1
-                        # Atualiza tentativa se estiver vazio
                         if not cli_row['tentativa_1']:
                             atualizar_cliente_directus(token, cli_row['id'], {"tentativa_1": datetime.now().strftime("%d/%m - Email em Massa")})
                     else:
                         erros += 1
                         log_erros.append(f"{cli_row['razao_social']}: {msg_log}")
                     
-                    time.sleep(1.0) # Delay para evitar bloqueio SMTP
+                    time.sleep(1.0)
                     bar.progress((i + 1) / len(selecionados_bulk))
                 
                 status_txt.empty()
@@ -671,7 +671,7 @@ with col_left:
                 subject_enc = urllib.parse.quote(res['subj'])
                 body_enc = urllib.parse.quote(corpo_final)
                 
-                # --- LINK PARA GOOGLE WORKSPACE/GMAIL ---
+                # --- LINK PARA GMAIL ---
                 link_gmail_final = f"https://mail.google.com/mail/?view=cm&fs=1&to={res['email']}&su={subject_enc}&body={body_enc}"
                 
                 st.link_button("📧 Abrir no Gmail", link_gmail_final, type="primary", use_container_width=True)
@@ -718,7 +718,7 @@ st.divider()
 st.subheader("📋 Lista Geral (Editável - Auto Save)")
 
 todas_colunas = list(df.columns)
-# ADICIONADO status_prospect AQUI NA LISTA PADRÃO
+# COLUNA NOVA ADICIONADA AQUI
 colunas_padrao = [c for c in ['pj_id', 'razao_social', 'status_prospect', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'GAP (dias)', 'tentativa_1', 'tentativa_2', 'tentativa_3', 'telefone_1'] if c in todas_colunas]
 
 colunas_selecionadas = st.multiselect(
@@ -734,7 +734,7 @@ if not df_filtrado.empty:
         "Categoria_Cliente": st.column_config.TextColumn("Status", disabled=True),
         "Ultima_Compra": st.column_config.TextColumn("Ult. Compra", disabled=True),
         "GAP (dias)": st.column_config.NumberColumn("GAP (dias)", disabled=True),
-        # ADICIONADO A CONFIGURAÇÃO DE DROPDOWN PARA status_prospect
+        # CONFIGURAÇÃO DROPDOWN PARA STATUS_PROSPECT
         "status_prospect": st.column_config.SelectboxColumn(
             "Status Prospecção",
             options=["Não atende", "Retornar", "Tel. Incorreto", "Contato Feito", "Enviado para o RD", "Status Final"],
