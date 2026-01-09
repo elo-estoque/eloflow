@@ -134,7 +134,7 @@ def gerar_sugestoes_elo_brindes(area_atuacao):
         return ["🎁 Garrafa Térmica Personalizada", "🎁 Mochila Executiva", "🎁 Kit Tecnológico (Powerbank)"], "Sugestão Geral (Erro IA)"
 
 # =========================================================
-#  FUNÇÕES DE BACKEND (COM CORREÇÕES DE SAVE)
+#  FUNÇÕES DE BACKEND
 # =========================================================
 
 def login_directus_debug(email, password):
@@ -253,7 +253,6 @@ def carregar_campanha_ativa(token):
     except: pass
     return None
 
-# --- FUNÇÃO CONFIG_SMTP CORRIGIDA E ROBUSTA ---
 def config_smtp_crud(token, payload=None):
     base_url = DIRECTUS_URL.rstrip('/')
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -261,9 +260,12 @@ def config_smtp_crud(token, payload=None):
 
     if payload:
         # Tenta verificar se já existe configuração
-        check = requests.get(url, headers=headers, verify=False)
-        
-        # Se falhar na leitura, avisa
+        try:
+            check = requests.get(url, headers=headers, verify=False)
+        except Exception as e:
+            st.error(f"❌ Erro de conexão com Directus: {e}")
+            return False
+
         if check.status_code != 200:
             st.error(f"❌ Erro ao acessar configurações no banco: {check.text}")
             return False
@@ -277,7 +279,7 @@ def config_smtp_crud(token, payload=None):
             if r.status_code == 200:
                 return True
             else:
-                st.error(f"❌ Erro ao salvar (PATCH). Verifique permissões: {r.text}")
+                st.error(f"❌ Erro ao salvar (PATCH). O Directus recusou: {r.text}")
                 return False
         else:
             # CRIA (POST)
@@ -285,13 +287,15 @@ def config_smtp_crud(token, payload=None):
             if r.status_code == 200:
                 return True
             else:
-                st.error(f"❌ Erro ao criar (POST). Verifique permissões: {r.text}")
+                st.error(f"❌ Erro ao criar (POST). O Directus recusou: {r.text}")
                 return False
     else:
         # APENAS LEITURA
-        r = requests.get(url, headers=headers, verify=False)
-        if r.status_code == 200 and r.json().get('data'): 
-            return r.json()['data'][0]
+        try:
+            r = requests.get(url, headers=headers, verify=False)
+            if r.status_code == 200 and r.json().get('data'): 
+                return r.json()['data'][0]
+        except: pass
         return None
 
 def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp):
@@ -302,8 +306,16 @@ def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp):
         msg['To'] = destinatario
         msg['Subject'] = assunto
         
-        corpo_completo = mensagem_html.replace("\n", "<br>")
-        if conf_smtp.get('assinatura_html'):
+        # --- LÓGICA INTELIGENTE DE HTML/TEXTO ---
+        # Se detectar tags HTML comuns, assume que é código fonte e preserva
+        if "<div" in mensagem_html or "<html" in mensagem_html or "<span" in mensagem_html or "<table" in mensagem_html or "<a href" in mensagem_html:
+            corpo_completo = mensagem_html
+        else:
+            # Se for texto simples, converte quebras de linha em <br>
+            corpo_completo = mensagem_html.replace("\n", "<br>")
+            
+        # Adiciona assinatura se não for um HTML completo (para não quebrar layout body/html fechados)
+        if conf_smtp.get('assinatura_html') and "</body>" not in corpo_completo:
             corpo_completo += f"<br><br>{conf_smtp['assinatura_html']}"
             
         msg.attach(MIMEText(corpo_completo, 'html'))
@@ -390,7 +402,7 @@ nome_usuario = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip
 primeiro_nome = user.get('first_name', '').strip().lower()
 cargo_usuario = "Vendedora" if primeiro_nome.endswith("a") else "Vendedor"
 
-# --- SIDEBAR (BARRA LATERAL) CORRIGIDA ---
+# --- SIDEBAR (BARRA LATERAL) ---
 with st.sidebar:
     st.markdown(f"<h2 style='color: #E31937; text-align: center;'>🦅 ELO FLOW</h2>", unsafe_allow_html=True)
     st.write(f"👤 **{nome_usuario}**")
@@ -508,7 +520,9 @@ with st.expander("📢 Disparo em Massa (Padrão para Vários Clientes)", expand
     with col_m2:
         st.subheader("2. Defina a Mensagem")
         assunto_padrao = st.text_input("Assunto do E-mail", value=f"Novidades Elo Brindes - {campanha['nome_campanha'] if campanha else 'Especial'}")
-        corpo_padrao = st.text_area("Mensagem (Pode usar texto simples)", height=200, value=f"Olá,\n\nGostaria de apresentar as novidades da Elo Brindes para sua empresa.\n\nAguardo seu retorno.")
+        
+        st.info("💡 Você pode colar código HTML (tabelas, imagens, cores) ou digitar texto normal aqui. O sistema detecta automaticamente.")
+        corpo_padrao = st.text_area("Mensagem ou Código HTML", height=300, value=f"Olá,\n\nGostaria de apresentar as novidades da Elo Brindes para sua empresa.\n\nAguardo seu retorno.")
         
         if st.button("🚀 ENVIAR PARA TODOS SELECIONADOS", type="primary", use_container_width=True):
             # Recarrega a configuração na hora do clique para garantir que está atualizada
