@@ -11,7 +11,8 @@ import os
 import random
 import urllib.parse
 import warnings
-import urllib3 
+import urllib3
+import json  # Adicionado para salvar configuração da tabela
 
 # --- 1. CONFIGURAÇÕES INICIAIS ---
 st.set_page_config(page_title="NeuroSales CRM", layout="wide", page_icon="🦅")
@@ -175,9 +176,9 @@ def carregar_clientes(token):
     base_url = DIRECTUS_URL.rstrip('/')
     headers = {"Authorization": f"Bearer {token}"}
     
-    # CAMPOS
-    fields_full = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,tentativa_1,tentativa_2,tentativa_3,status_prospect"
-    fields_safe = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,status_prospect"
+    # CAMPOS ATUALIZADOS COM AS NOVAS COLUNAS
+    fields_full = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,tentativa_1,tentativa_2,tentativa_3,status_prospect,email_2,representante_nome,representante_email"
+    fields_safe = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,status_prospect,email_2,representante_nome,representante_email"
     
     df = pd.DataFrame()
     colunas_faltantes = False
@@ -206,6 +207,11 @@ def carregar_clientes(token):
             
             if 'status_prospect' not in df.columns:
                 df['status_prospect'] = None
+            
+            # Garantir que as colunas novas existam no DF mesmo se vierem vazias
+            for col_nova in ['email_2', 'representante_nome', 'representante_email']:
+                if col_nova not in df.columns:
+                    df[col_nova] = None
             
             def definir_cat(row):
                 if 'status_carteira' in row and row['status_carteira']: return row['status_carteira']
@@ -607,12 +613,18 @@ with col_left:
             email_cli = str(cli['email_1'])
             tel_clean = limpar_telefone(tel_raw)
             
+            # --- NOVAS VARIÁVEIS DO CARD ---
+            rep_nome = cli.get('representante_nome')
+            rep_email = cli.get('representante_email')
+            email2 = cli.get('email_2')
+            
             with st.spinner("🦅 Consultando catálogo Elo Brindes..."):
                  sugestoes, motivo_sugestao = gerar_sugestoes_elo_brindes(area_cli)
                  
             html_sugestoes = "".join([f"<div class='sku-item'>{s}</div>" for s in sugestoes])
             script_msg = f"Olá! Sou da Elo Brindes. Vi que sua última compra foi há {dias} dias. Temos novidades personalizadas para {area_cli}."
             
+            # --- CARD ATUALIZADO COM NOVOS DADOS ---
             html_card = f"""
             <div class="foco-card">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -623,6 +635,9 @@ with col_left:
                     <div class="foco-item"><b>📍 Área</b>{area_cli}</div>
                     <div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
                     <div class="foco-item"><b>📧 Email</b>{email_cli[:25]}...</div>
+                    <div class="foco-item"><b>📧 Email 2</b>{email2 if email2 else '-'}</div>
+                    <div class="foco-item"><b>👤 Rep.</b>{rep_nome if rep_nome else '-'}</div>
+                    <div class="foco-item"><b>📧 Rep. Email</b>{rep_email if rep_email else '-'}</div>
                     <div class="foco-item"><b>📅 Compra</b>{cli['Ultima_Compra']}</div>
                     <div class="foco-item"><b>⚠️ Status</b>{cli['Categoria_Cliente']}</div>
                 </div>
@@ -718,14 +733,35 @@ st.divider()
 st.subheader("📋 Lista Geral (Editável - Auto Save)")
 
 todas_colunas = list(df.columns)
-# COLUNA NOVA ADICIONADA AQUI
-colunas_padrao = [c for c in ['pj_id', 'razao_social', 'status_prospect', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'GAP (dias)', 'tentativa_1', 'tentativa_2', 'tentativa_3', 'telefone_1'] if c in todas_colunas]
+
+# --- LÓGICA DE PERSISTÊNCIA DA CONFIGURAÇÃO DA TABELA (JSON LOCAL) ---
+CONFIG_FILE = "grid_config.json"
+
+# Colunas padrão se não houver arquivo salvo
+cols_default = [c for c in ['pj_id', 'razao_social', 'status_prospect', 'email_2', 'representante_nome', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'telefone_1'] if c in todas_colunas]
+
+# Carrega configuração salva
+saved_cols = cols_default
+if os.path.exists(CONFIG_FILE):
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            loaded = json.load(f)
+            # Filtra apenas colunas que realmente existem no DF atual (pra evitar erro se coluna mudar nome)
+            saved_cols = [c for c in loaded if c in todas_colunas]
+            if not saved_cols: saved_cols = cols_default
+    except:
+        saved_cols = cols_default
 
 colunas_selecionadas = st.multiselect(
-    "Selecione as colunas para exibir/editar:",
+    "Selecione as colunas para exibir/editar (Sua escolha fica salva):",
     options=todas_colunas,
-    default=colunas_padrao
+    default=saved_cols
 )
+
+# Salva configuração se mudar
+if colunas_selecionadas != saved_cols:
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(colunas_selecionadas, f)
 
 if not df_filtrado.empty:
     config_cols = {
