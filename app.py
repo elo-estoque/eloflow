@@ -175,8 +175,9 @@ def carregar_clientes(token):
     base_url = DIRECTUS_URL.rstrip('/')
     headers = {"Authorization": f"Bearer {token}"}
     
-    fields_full = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,tentativa_1,tentativa_2,tentativa_3"
-    fields_safe = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj"
+    # ADICIONADO status_prospect na chamada da API
+    fields_full = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,tentativa_1,tentativa_2,tentativa_3,status_prospect"
+    fields_safe = "id,pj_id,razao_social,nome_fantasia,status_carteira,area_atuacao,data_ultima_compra,telefone_1,email_1,obs_gerais,cnpj,status_prospect"
     
     df = pd.DataFrame()
     colunas_faltantes = False
@@ -202,6 +203,10 @@ def carregar_clientes(token):
             df['Ultima_Compra'] = df['data_temp'].dt.strftime('%d/%m/%Y').fillna("-")
             hoje = pd.Timestamp.now()
             df['dias_sem_compra'] = (hoje - df['data_temp']).dt.days.fillna(9999).astype(int)
+            
+            # Garante que a coluna nova existe no DF mesmo se vier vazia
+            if 'status_prospect' not in df.columns:
+                df['status_prospect'] = None
             
             def definir_cat(row):
                 if 'status_carteira' in row and row['status_carteira']: return row['status_carteira']
@@ -307,14 +312,11 @@ def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp):
         msg['Subject'] = assunto
         
         # --- LÓGICA INTELIGENTE DE HTML/TEXTO ---
-        # Se detectar tags HTML comuns, assume que é código fonte e preserva
         if "<div" in mensagem_html or "<html" in mensagem_html or "<span" in mensagem_html or "<table" in mensagem_html or "<a href" in mensagem_html:
             corpo_completo = mensagem_html
         else:
-            # Se for texto simples, converte quebras de linha em <br>
             corpo_completo = mensagem_html.replace("\n", "<br>")
             
-        # Adiciona assinatura se não for um HTML completo (para não quebrar layout body/html fechados)
         if conf_smtp.get('assinatura_html') and "</body>" not in corpo_completo:
             corpo_completo += f"<br><br>{conf_smtp['assinatura_html']}"
             
@@ -322,7 +324,6 @@ def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp):
         
         server = smtplib.SMTP(conf_smtp['smtp_host'], conf_smtp['smtp_port'])
         server.starttls()
-        # Aqui é onde ocorre o login com a senha de app
         server.login(conf_smtp['smtp_user'], conf_smtp['smtp_pass_app'])
         server.sendmail(conf_smtp['smtp_user'], destinatario, msg.as_string())
         server.quit()
@@ -717,7 +718,8 @@ st.divider()
 st.subheader("📋 Lista Geral (Editável - Auto Save)")
 
 todas_colunas = list(df.columns)
-colunas_padrao = [c for c in ['pj_id', 'razao_social', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'GAP (dias)', 'tentativa_1', 'tentativa_2', 'tentativa_3', 'telefone_1'] if c in todas_colunas]
+# ADICIONADO status_prospect AQUI NA LISTA PADRÃO
+colunas_padrao = [c for c in ['pj_id', 'razao_social', 'status_prospect', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'GAP (dias)', 'tentativa_1', 'tentativa_2', 'tentativa_3', 'telefone_1'] if c in todas_colunas]
 
 colunas_selecionadas = st.multiselect(
     "Selecione as colunas para exibir/editar:",
@@ -732,6 +734,13 @@ if not df_filtrado.empty:
         "Categoria_Cliente": st.column_config.TextColumn("Status", disabled=True),
         "Ultima_Compra": st.column_config.TextColumn("Ult. Compra", disabled=True),
         "GAP (dias)": st.column_config.NumberColumn("GAP (dias)", disabled=True),
+        # ADICIONADO A CONFIGURAÇÃO DE DROPDOWN PARA status_prospect
+        "status_prospect": st.column_config.SelectboxColumn(
+            "Status Prospecção",
+            options=["Não atende", "Retornar", "Tel. Incorreto", "Contato Feito", "Enviado para o RD", "Status Final"],
+            width="medium",
+            required=False
+        ),
         "id": None, 
         "Ação": st.column_config.CheckboxColumn("➡️ Abrir", help="Clique para abrir os dados deste cliente lá em cima", default=False)
     }
