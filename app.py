@@ -172,6 +172,27 @@ def login_directus_debug(email, password):
     st.error(f"❌ Erro: {response.text}")
     return None, None
 
+def alterar_senha_directus(token, nova_senha):
+    """
+    Permite que o usuário logado altere sua própria senha.
+    """
+    base_url = DIRECTUS_URL.rstrip('/')
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        # Endpoint para atualizar o próprio usuário (/users/me)
+        r = requests.patch(
+            f"{base_url}/users/me",
+            json={"password": nova_senha},
+            headers=headers,
+            verify=False
+        )
+        if r.status_code == 200:
+            return True, "Senha alterada com sucesso."
+        else:
+            return False, f"Erro Directus: {r.text}"
+    except Exception as e:
+        return False, str(e)
+
 def carregar_clientes(token):
     base_url = DIRECTUS_URL.rstrip('/')
     headers = {"Authorization": f"Bearer {token}"}
@@ -446,9 +467,37 @@ with st.sidebar:
     if st.button("Sair"):
         st.session_state.clear()
         st.rerun()
+    
     st.divider()
 
-    # --- MANUAL DE INSTRUÇÕES (NOVO) ---
+    # --- ALTERAR SENHA (NOVO) ---
+    with st.expander("🔐 Alterar Senha", expanded=False):
+        form_senha = st.form("form_change_pw")
+        with form_senha:
+            nova_pw1 = st.text_input("Nova Senha", type="password")
+            nova_pw2 = st.text_input("Confirmar Nova Senha", type="password")
+            btn_salvar_senha = st.form_submit_button("Atualizar Senha", use_container_width=True)
+        
+        if btn_salvar_senha:
+            if not nova_pw1 or not nova_pw2:
+                st.error("Preencha os campos.")
+            elif nova_pw1 != nova_pw2:
+                st.error("As senhas não conferem.")
+            elif len(nova_pw1) < 5:
+                st.error("A senha deve ter no mínimo 5 caracteres.")
+            else:
+                ok_pw, msg_pw = alterar_senha_directus(token, nova_pw1)
+                if ok_pw:
+                    st.success("✅ Senha alterada! Faça login novamente.")
+                    time.sleep(2)
+                    st.session_state.clear()
+                    st.rerun()
+                else:
+                    st.error(f"Erro: {msg_pw}")
+
+    st.divider()
+
+    # --- MANUAL DE INSTRUÇÕES ---
     with st.expander("📘 MANUAL DE USO (Leia Antes)", expanded=False):
         st.markdown("""
         ### 🎯 Resumo do ELOFLOW
