@@ -138,6 +138,21 @@ def gerar_sugestoes_elo_brindes(area_atuacao):
 #  FUNÇÕES DE BACKEND
 # =========================================================
 
+def validar_token_existente(token):
+    """Verifica se um token salvo ainda é válido"""
+    base_url = DIRECTUS_URL.rstrip('/')
+    try:
+        r = requests.get(
+            f"{base_url}/users/me", 
+            headers={"Authorization": f"Bearer {token}"}, 
+            timeout=5, 
+            verify=False
+        )
+        if r.status_code == 200:
+            return r.json()['data']
+    except: pass
+    return None
+
 def login_directus_debug(email, password):
     base_url = DIRECTUS_URL.rstrip('/')
     try:
@@ -433,6 +448,24 @@ def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome,
 #  INTERFACE (STREAMLIT)
 # =========================================================
 
+# --- TENTATIVA DE RECUPERAR SESSÃO (F5 / REFRESH) ---
+if 'token' not in st.session_state:
+    try:
+        # Verifica se há token salvo nos parâmetros da URL (Query Params)
+        params = st.query_params
+        token_url = params.get("token")
+        
+        if token_url:
+            # Valida se o token ainda funciona no Directus
+            user_data = validar_token_existente(token_url)
+            if user_data:
+                st.session_state['token'] = token_url
+                st.session_state['user'] = user_data
+            else:
+                # Se expirou ou é inválido, limpa a URL
+                st.query_params.clear()
+    except: pass
+
 if 'token' not in st.session_state:
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
@@ -444,6 +477,8 @@ if 'token' not in st.session_state:
             if token:
                 st.session_state['token'] = token
                 st.session_state['user'] = user
+                # Salva o token na URL para persistir no F5
+                st.query_params["token"] = token
                 st.rerun()
     st.stop()
 
@@ -462,6 +497,7 @@ with st.sidebar:
     st.caption(f"💼 {cargo_usuario}")
     if st.button("Sair"):
         st.session_state.clear()
+        st.query_params.clear() # Limpa o token da URL ao sair
         st.rerun()
     
     st.divider()
@@ -487,6 +523,7 @@ with st.sidebar:
                     st.success("✅ Senha alterada! Faça login novamente.")
                     time.sleep(2)
                     st.session_state.clear()
+                    st.query_params.clear()
                     st.rerun()
                 else:
                     st.error(f"Erro: {msg_pw}")
