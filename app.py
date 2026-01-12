@@ -437,6 +437,34 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
     st.divider()
+
+    # --- MANUAL DE INSTRUÇÕES (NOVO) ---
+    with st.expander("📘 MANUAL DE USO (Leia Antes)", expanded=False):
+        st.markdown("""
+        ### 🎯 Resumo do NeuroSales
+        Este sistema foi desenhado para **vendas de precisão** e **disparos seguros**.
+
+        #### 1. 📢 Disparo em Massa (Modo Sniper)
+        Para evitar que o Google bloqueie seu e-mail:
+        * **Limite:** 100 e-mails por dia (Cota da Equipe).
+        * **Lentidão Proposital:** O sistema espera **15 a 45 segundos** aleatoriamente entre cada envio. Isso "engana" o Google para parecer um humano.
+        * **Recomendação:** Selecione no máximo **20 clientes** por vez e deixe a aba aberta trabalhando.
+
+        #### 2. 🚀 Modo de Ataque (Um a Um)
+        * Ideal para recuperar clientes inativos.
+        * **IA Mágica:** Gera um e-mail ultra-personalizado baseado no Ramo e na última compra.
+        * **WhatsApp:** Gera link direto com script de abordagem.
+
+        #### 3. 📋 Edição Rápida
+        * A tabela no final da página funciona como Excel.
+        * Edite o "Status Prospecção" ou "Obs" e clique fora. O sistema salva sozinho (aparece um aviso ✅).
+        * Selecione quais colunas quer ver no filtro acima da tabela.
+
+        #### ⚠️ Configuração Obrigatória
+        Antes de enviar e-mails, vá em **⚙️ Configurar E-mail** abaixo e coloque sua **Senha de Aplicativo** (Não é a senha do email normal!).
+        """)
+    
+    st.divider()
     
     with st.expander("⚙️ Configurar E-mail (SMTP)"):
         st.info("Necessário para o DISPARO EM MASSA.")
