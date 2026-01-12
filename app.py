@@ -173,13 +173,9 @@ def login_directus_debug(email, password):
     return None, None
 
 def alterar_senha_directus(token, nova_senha):
-    """
-    Permite que o usuário logado altere sua própria senha.
-    """
     base_url = DIRECTUS_URL.rstrip('/')
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     try:
-        # Endpoint para atualizar o próprio usuário (/users/me)
         r = requests.patch(
             f"{base_url}/users/me",
             json={"password": nova_senha},
@@ -745,9 +741,15 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
                             erros += 1
                             log_erros.append(f"{cli_row['razao_social']} ({dest['email']}): {msg_log}")
                     
-                    # Atualiza tentativa se deu certo
-                    if email_enviado_para_cliente and not cli_row['tentativa_1']:
-                        atualizar_cliente_directus(token, cli_row['id'], {"tentativa_1": datetime.now().strftime("%d/%m - Email em Massa")})
+                    # --- ATUALIZAÇÃO AUTOMÁTICA DO STATUS ---
+                    if email_enviado_para_cliente:
+                        dados_update = {"status_prospect": "Contato Feito"}
+                        
+                        # Mantém a lógica da tentativa_1 se estiver vazia
+                        if not cli_row['tentativa_1']:
+                            dados_update["tentativa_1"] = datetime.now().strftime("%d/%m - Email em Massa")
+                        
+                        atualizar_cliente_directus(token, cli_row['id'], dados_update)
                     
                     bar.progress((i + 1) / total_empresas)
                 
