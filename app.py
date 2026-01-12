@@ -342,6 +342,30 @@ def registrar_log(token, pj_id, assunto, corpo, status):
         requests.post(f"{base_url}/items/historico_envios", json=payload, headers=headers, verify=False)
     except: pass
 
+def contar_envios_hoje_directus(token):
+    """
+    Conta quantos registros existem na tabela 'historico_envios' com a data de hoje.
+    Usado para garantir a cota de segurança e evitar spam.
+    """
+    try:
+        base_url = DIRECTUS_URL.rstrip('/')
+        hoje_str = datetime.now().strftime("%Y-%m-%d")
+        
+        # Filtra onde 'data_envio' contem a data de hoje
+        url = f"{base_url}/items/historico_envios?filter[data_envio][_contains]={hoje_str}&aggregate[count]=*"
+        
+        r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, verify=False)
+        
+        if r.status_code == 200:
+            data = r.json()['data']
+            # O Directus retorna agregação como uma lista de objetos
+            if isinstance(data, list) and len(data) > 0:
+                return int(data[0].get('count', 0))
+            return 0
+    except Exception as e:
+        return 0
+    return 0
+
 def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome, usuario_cargo):
     if not GEMINI_API_KEY: return "Erro IA", "Sem Chave API configurada"
     camp_nome = campanha.get('nome_campanha', 'Retomada') if campanha else 'Contato'
@@ -501,15 +525,33 @@ if "editor_dados" in st.session_state:
 
 st.divider()
 
-# --- BLOCO: DISPARO EM MASSA ATUALIZADO (FORMATAÇÃO NOME + TODOS EMAILS) ---
-with st.expander("📢 Disparo em Massa (Padrão para Vários Clientes)", expanded=False):
-    st.markdown("⚠️ **Atenção:** Certifique-se de que configurou e salvou o SMTP na barra lateral antes de enviar.")
+# --- BLOCO: DISPARO EM MASSA SEGURO ---
+with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
+    st.markdown("⚠️ **Regras de Segurança:** O sistema envia 1 e-mail a cada **15~45 segundos** para evitar bloqueios do Google.")
     
+    # 1. VERIFICAÇÃO DE COTA DIÁRIA
+    cota_maxima = 100
+    envios_hoje = contar_envios_hoje_directus(token)
+    saldo_restante = cota_maxima - envios_hoje
+    
+    # Barra de progresso da cota diária
+    col_cota1, col_cota2 = st.columns([3, 1])
+    with col_cota1:
+        st.progress(min(envios_hoje / cota_maxima, 1.0), text=f"Cota Diária da Equipe: {envios_hoje}/{cota_maxima} envios hoje")
+    with col_cota2:
+        if saldo_restante <= 0:
+            st.error("⛔ Cota Atingida!")
+        else:
+            st.success(f"✅ {saldo_restante} livres")
+
+    st.divider()
+
     col_m1, col_m2 = st.columns([1, 1])
     
     with col_m1:
         st.subheader("1. Selecione os Clientes")
-        # Filtra empresas que tenham PELO MENOS UM e-mail válido
+        
+        # Filtra empresas com e-mail válido
         mask_email = (
             df_filtrado['email_1'].str.contains('@', na=False) | 
             df_filtrado['email_2'].str.contains('@', na=False) | 
@@ -520,102 +562,118 @@ with st.expander("📢 Disparo em Massa (Padrão para Vários Clientes)", expand
         
         container_botoes = st.container()
         col_b1, col_b2 = container_botoes.columns(2)
-        if col_b1.button("Selecionar Todos (Filtrados)"):
-            st.session_state['selected_bulk'] = lista_clientes_validos
+        
+        # Botões de seleção rápida
+        if col_b1.button("Selecionar Top 10"):
+            st.session_state['selected_bulk'] = lista_clientes_validos[:10]
         if col_b2.button("Limpar Seleção"):
             st.session_state['selected_bulk'] = []
             
         selecionados_bulk = st.multiselect(
-            "Clientes Destinatários (Envia para todos os e-mails do cadastro):", 
+            "Clientes Destinatários:", 
             options=lista_clientes_validos,
             key='selected_bulk'
         )
-        st.caption(f"Total Selecionado: {len(selecionados_bulk)} empresas")
+        
+        qtd_selecionada = len(selecionados_bulk)
+        st.caption(f"Selecionados: {qtd_selecionada} empresas")
+
+        # Alertas de quantidade
+        if qtd_selecionada > 20:
+            st.warning("⚠️ Recomendação: Selecione no máximo 20 por vez para o envio não demorar muito.")
+        if qtd_selecionada > saldo_restante:
+            st.error(f"⛔ Você selecionou {qtd_selecionada}, mas só tem {saldo_restante} envios restantes hoje.")
 
     with col_m2:
         st.subheader("2. Defina a Mensagem")
         assunto_padrao = st.text_input("Assunto do E-mail", value=f"Novidades Elo Brindes - {campanha['nome_campanha'] if campanha else 'Especial'}")
         
-        st.info("💡 Você pode colar código HTML ou texto normal.")
+        st.info("💡 Dica: Use a tabela HTML simples para evitar quebras no Outlook.")
         corpo_padrao = st.text_area("Mensagem ou Código HTML", height=300, value=f"Olá,\n\nGostaria de apresentar as novidades da Elo Brindes para sua empresa.\n\nAguardo seu retorno.")
         
-        if st.button("🚀 ENVIAR PARA TODOS E-MAILS DOS SELECIONADOS", type="primary", use_container_width=True):
+        # TRAVA O BOTÃO SE ESTIVER SEM SALDO
+        botao_disabled = (saldo_restante <= 0) or (qtd_selecionada == 0) or (qtd_selecionada > saldo_restante)
+        
+        if st.button("🚀 INICIAR DISPARO SEGURO", type="primary", use_container_width=True, disabled=botao_disabled):
             conf_smtp = config_smtp_crud(token)
             
             if not conf_smtp or not conf_smtp.get('smtp_pass_app'):
-                st.error("🚨 Configure o SMTP na barra lateral e clique em SALVAR primeiro!")
-            elif len(selecionados_bulk) == 0:
-                st.warning("Selecione pelo menos um cliente.")
+                st.error("🚨 Configure o SMTP na barra lateral primeiro!")
             else:
+                st.write("---")
+                status_box = st.status("🦅 Iniciando sequência de envio...", expanded=True)
                 bar = st.progress(0)
-                status_txt = st.empty()
+                
                 enviados = 0
                 erros = 0
                 log_erros = []
-                
                 total_empresas = len(selecionados_bulk)
                 
                 for i, nome_cliente in enumerate(selecionados_bulk):
+                    # --- PAUSA DE SEGURANÇA (RANDOMICA) ---
+                    # Pula o delay no primeiro email, aplica nos seguintes
+                    if i > 0:
+                        tempo_espera = random.randint(15, 45) # ENTRE 15 e 45 SEGUNDOS
+                        status_box.update(label=f"⏳ Aguardando {tempo_espera}s para parecer humano (Google Anti-Spam)...", state="running")
+                        time.sleep(tempo_espera)
+                    
+                    # --- PREPARAÇÃO DO EMAIL ---
                     cli_row = df_com_email[df_com_email['label_select'] == nome_cliente].iloc[0]
                     
-                    # --- LÓGICA DE NOME FORMATADO PARA O DISPARO EM MASSA ---
-                    # 1. Pega o nome do representante se existir
+                    # Formatação de Nome
                     nome_base = str(cli_row['razao_social'])
                     if cli_row.get('representante_nome') and str(cli_row.get('representante_nome')).lower() not in ['none', '', 'nan']:
                         nome_base = str(cli_row['representante_nome'])
-                    
-                    # 2. Formata: Só o primeiro nome + Title Case (Ex: "CAIO RIBEIRO" -> "Caio")
                     primeiro_nome_formatado = nome_base.split()[0].title() if nome_base else ""
                     
-                    # 3. Substitui no texto
+                    # Substituição no texto
                     msg_final = corpo_padrao.replace("{cliente}", primeiro_nome_formatado)
                     
-                    # Coleta todos os e-mails disponíveis da empresa
+                    # Coleta destinatários
                     destinatarios = []
-                    
                     if cli_row['representante_email'] and "@" in str(cli_row['representante_email']):
-                        destinatarios.append({'email': cli_row['representante_email'], 'tipo': 'Representante', 'cor': '#FFD700'})
-                        
+                        destinatarios.append({'email': cli_row['representante_email'], 'tipo': 'Representante'})
                     if cli_row['email_1'] and "@" in str(cli_row['email_1']):
-                         destinatarios.append({'email': cli_row['email_1'], 'tipo': 'Principal', 'cor': '#E5E7EB'})
-                    
+                         destinatarios.append({'email': cli_row['email_1'], 'tipo': 'Principal'})
                     if cli_row['email_2'] and "@" in str(cli_row['email_2']):
-                        destinatarios.append({'email': cli_row['email_2'], 'tipo': 'Secundário', 'cor': '#9CA3AF'})
+                        destinatarios.append({'email': cli_row['email_2'], 'tipo': 'Secundário'})
 
-                    # Envia para cada um
+                    # --- ENVIO ---
+                    status_box.write(f"📤 Enviando para **{cli_row['razao_social']}**...")
+                    
+                    email_enviado_para_cliente = False # Flag para saber se enviou pelo menos 1
+                    
                     for dest in destinatarios:
-                        status_txt.markdown(f"Enviando para **{cli_row['razao_social']}** (Olá {primeiro_nome_formatado}) - <span style='color:{dest['cor']}'>{dest['tipo']}</span>...", unsafe_allow_html=True)
-                        
                         sucesso, msg_log = enviar_email_smtp(token, dest['email'], assunto_padrao, msg_final, conf_smtp)
                         
+                        # LOG NO DIRECTUS (CRÍTICO PARA CONTAGEM)
+                        # Registramos o log independente de sucesso ou erro, mas marcamos o status
+                        status_envio_db = "Enviado" if sucesso else f"Erro: {msg_log}"
+                        registrar_log(token, cli_row['pj_id'], assunto_padrao, f"Para: {dest['email']}", status_envio_db)
+
                         if sucesso:
+                            email_enviado_para_cliente = True
                             enviados += 1
                         else:
                             erros += 1
                             log_erros.append(f"{cli_row['razao_social']} ({dest['email']}): {msg_log}")
-                        
-                        time.sleep(0.5)
-
-                    if not cli_row['tentativa_1'] and destinatarios:
+                    
+                    # Atualiza tentativa se deu certo
+                    if email_enviado_para_cliente and not cli_row['tentativa_1']:
                         atualizar_cliente_directus(token, cli_row['id'], {"tentativa_1": datetime.now().strftime("%d/%m - Email em Massa")})
                     
                     bar.progress((i + 1) / total_empresas)
                 
-                status_txt.empty()
-                bar.empty()
+                status_box.update(label="✅ Finalizado!", state="complete", expanded=False)
                 
                 if enviados > 0:
-                    st.success(f"✅ Processo finalizado! {enviados} e-mails enviados no total.")
+                    st.success(f"Processo finalizado! {enviados} e-mails enviados.")
+                    st.balloons()
+                    time.sleep(3)
+                    st.rerun() # Recarrega para atualizar a cota
                 
                 if erros > 0:
-                    st.error(f"❌ Ocorreram {erros} erros de envio.")
-                    with st.expander("Ver detalhes dos erros"):
-                        for erro in log_erros:
-                            st.write(erro)
-                
-                if erros == 0 and enviados > 0:
-                    time.sleep(2)
-                    st.rerun()
+                    st.error(f"Ocorreram {erros} erros. Verifique o console.")
 
 st.divider()
 
