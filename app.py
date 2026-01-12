@@ -263,14 +263,19 @@ def carregar_campanha_ativa(token):
     except: pass
     return None
 
-def config_smtp_crud(token, payload=None):
+def config_smtp_crud(token, user_email, payload=None):
     base_url = DIRECTUS_URL.rstrip('/')
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    url = f"{base_url}/items/config_smtp"
+    
+    # URL BASE e URL COM FILTRO PELO E-MAIL DO VENDEDOR
+    # Isso evita sobrescrever a config de outro usuário
+    url_base = f"{base_url}/items/config_smtp"
+    url_filter = f"{url_base}?filter[vendedor_email][_eq]={user_email}"
 
     if payload:
+        # 1. Tenta achar se já existe config para este vendedor
         try:
-            check = requests.get(url, headers=headers, verify=False)
+            check = requests.get(url_filter, headers=headers, verify=False)
         except Exception as e:
             st.error(f"❌ Erro de conexão com Directus: {e}")
             return False
@@ -282,23 +287,27 @@ def config_smtp_crud(token, payload=None):
         data = check.json().get('data', [])
         
         if len(data) > 0:
+            # ATUALIZAR (PATCH) no ID específico
             id_item = data[0]['id']
-            r = requests.patch(f"{url}/{id_item}", json=payload, headers=headers, verify=False)
+            r = requests.patch(f"{url_base}/{id_item}", json=payload, headers=headers, verify=False)
             if r.status_code == 200:
                 return True
             else:
                 st.error(f"❌ Erro ao salvar (PATCH). O Directus recusou: {r.text}")
                 return False
         else:
-            r = requests.post(url, json=payload, headers=headers, verify=False)
+            # CRIAR (POST) vinculando ao email
+            payload['vendedor_email'] = user_email
+            r = requests.post(url_base, json=payload, headers=headers, verify=False)
             if r.status_code == 200:
                 return True
             else:
                 st.error(f"❌ Erro ao criar (POST). O Directus recusou: {r.text}")
                 return False
     else:
+        # LEITURA
         try:
-            r = requests.get(url, headers=headers, verify=False)
+            r = requests.get(url_filter, headers=headers, verify=False)
             if r.status_code == 200 and r.json().get('data'): 
                 return r.json()['data'][0]
         except: pass
@@ -427,6 +436,7 @@ user = st.session_state['user']
 nome_usuario = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
 primeiro_nome = user.get('first_name', '').strip().lower()
 cargo_usuario = "Vendedora" if primeiro_nome.endswith("a") else "Vendedor"
+user_email = user.get('email', '')
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -468,7 +478,7 @@ with st.sidebar:
     
     with st.expander("⚙️ Configurar E-mail (SMTP)"):
         st.info("Necessário para o DISPARO EM MASSA.")
-        conf = config_smtp_crud(token)
+        conf = config_smtp_crud(token, user_email)
         
         h = st.text_input("Host", value=conf['smtp_host'] if conf else "smtp.gmail.com")
         p = st.number_input("Porta", value=conf['smtp_port'] if conf else 587)
@@ -490,7 +500,7 @@ with st.sidebar:
                     "smtp_pass_app": pw, 
                     "assinatura_html": ass
                 }
-                salvou = config_smtp_crud(token, payload)
+                salvou = config_smtp_crud(token, user_email, payload)
                 if salvou:
                     st.success("✅ Salvo com sucesso! Recarregando...")
                     time.sleep(1.5)
@@ -623,7 +633,7 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
         botao_disabled = (saldo_restante <= 0) or (qtd_selecionada == 0) or (qtd_selecionada > saldo_restante)
         
         if st.button("🚀 INICIAR DISPARO SEGURO", type="primary", use_container_width=True, disabled=botao_disabled):
-            conf_smtp = config_smtp_crud(token)
+            conf_smtp = config_smtp_crud(token, user_email)
             
             if not conf_smtp or not conf_smtp.get('smtp_pass_app'):
                 st.error("🚨 Configure o SMTP na barra lateral primeiro!")
