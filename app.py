@@ -15,7 +15,7 @@ import urllib3
 import json
 
 # --- 1. CONFIGURAÇÕES INICIAIS ---
-st.set_page_config(page_title="NeuroSales CRM", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="ELOFLOW", layout="wide", page_icon="🦅")
 
 # Ignorar avisos de SSL
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -410,7 +410,7 @@ def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome,
 if 'token' not in st.session_state:
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.markdown("<br><h1 style='text-align:center; color:#E31937'>🦅 NeuroSales CRM</h1>", unsafe_allow_html=True)
+        st.markdown("<br><h1 style='text-align:center; color:#E31937'>🦅 ELOFLOW</h1>", unsafe_allow_html=True)
         email = st.text_input("E-mail")
         senha = st.text_input("Senha", type="password")
         if st.button("ENTRAR", use_container_width=True):
@@ -441,7 +441,7 @@ with st.sidebar:
     # --- MANUAL DE INSTRUÇÕES (NOVO) ---
     with st.expander("📘 MANUAL DE USO (Leia Antes)", expanded=False):
         st.markdown("""
-        ### 🎯 Resumo do NeuroSales
+        ### 🎯 Resumo do ELOFLOW
         Este sistema foi desenhado para **vendas de precisão** e **disparos seguros**.
 
         #### 1. 📢 Disparo em Massa (Modo Sniper)
