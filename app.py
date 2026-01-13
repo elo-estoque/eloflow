@@ -16,6 +16,7 @@ import warnings
 import urllib3
 import json
 from groq import Groq
+import io
 
 # --- 1. CONFIGURAÇÕES INICIAIS ---
 st.set_page_config(page_title="ELOFLOW", layout="wide", page_icon="🦅")
@@ -68,6 +69,15 @@ st.markdown("""
         border: 1px solid rgba(251, 191, 36, 0.2);
     }
     span[data-baseweb="tag"] { background-color: #333 !important; }
+    
+    /* Abas personalizadas */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px; white-space: pre-wrap; background-color: #111; border-radius: 4px; color: #fff;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #E31937 !important; color: #fff !important;
+    }
     
     section[data-testid="stSidebar"] { background-color: #111; border-right: 1px solid #333; }
 </style>
@@ -412,13 +422,22 @@ def registrar_log(token, pj_id, assunto, corpo, status):
         # CORREÇÃO: Usar formato de data simples para compatibilidade com Directus
         data_formatada = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
+        # Se for envio externo, pj_id pode vir como string "EXTERNO" ou nulo, o Directus pode reclamar
+        # se o campo for relacional. Tentamos converter, se falhar, envia null se permitido ou 0.
+        
         payload = {
-            "cliente_pj_id": str(pj_id), 
+            "cliente_pj_id": pj_id if str(pj_id).isdigit() else None, 
             "assunto_gerado": assunto, 
             "corpo_email": corpo, 
             "status_envio": status, 
             "data_envio": data_formatada
         }
+        
+        # Se pj_id for None (externo), talvez precise registrar o nome do lead no corpo ou em outro campo
+        if payload['cliente_pj_id'] is None:
+            # Adicionamos uma flag no corpo/assunto para saber que foi externo
+            payload['assunto_gerado'] = f"[EXTERNO] {assunto}"
+        
         requests.post(f"{base_url}/items/historico_envios", json=payload, headers=headers, verify=False)
     except: pass
 
@@ -595,26 +614,18 @@ with st.sidebar:
     with st.expander("📘 MANUAL DE USO (Leia Antes)", expanded=False):
         st.markdown("""
         ### 🎯 Resumo do ELOFLOW
-        Este sistema foi desenhado para **vendas de precisão** e **disparos seguros**.
+        
+        #### 1. 📂 Carteira de Clientes
+        * **Modo Sniper:** Envie para até 20 clientes da sua carteira por vez.
+        * **Modo Ataque:** Ações individuais com IA e WhatsApp.
+        
+        #### 2. 👽 Prospecção Externa (NOVO)
+        * Carregue uma lista de Excel ou CSV com e-mails de fora da base.
+        * O sistema usa a mesma segurança de envio.
+        * Ideal para listas de Leads frios.
 
-        #### 1. 📢 Disparo em Massa (Modo Sniper)
-        Para evitar que o Google bloqueie seu e-mail:
-        * **Limite:** 100 e-mails por dia (Cota da Equipe).
-        * **Lentidão Proposital:** O sistema espera **15 a 45 segundos** aleatoriamente entre cada envio. Isso "engana" o Google para parecer um humano.
-        * **Recomendação:** Selecione no máximo **20 clientes** por vez e deixe a aba aberta trabalhando.
-
-        #### 2. 🚀 Modo de Ataque (Um a Um)
-        * Ideal para recuperar clientes inativos.
-        * **IA Mágica:** Gera um e-mail ultra-personalizado baseado no Ramo e na última compra.
-        * **WhatsApp:** Gera link direto com script de abordagem.
-
-        #### 3. 📋 Edição Rápida
-        * A tabela no final da página funciona como Excel.
-        * Edite o "Status Prospecção" ou "Obs" e clique fora. O sistema salva sozinho (aparece um aviso ✅).
-        * Selecione quais colunas quer ver no filtro acima da tabela.
-
-        #### ⚠️ Configuração Obrigatória
-        Antes de enviar e-mails, vá em **⚙️ Configurar E-mail** abaixo e coloque sua **Senha de Aplicativo** (Não é a senha do email normal!).
+        #### ⚠️ Cota Diária Compartilhada
+        O limite de 100 envios/dia vale para AMBAS as abas somadas. Use com sabedoria!
         """)
     
     st.divider()
@@ -651,512 +662,633 @@ with st.sidebar:
 
 # --- CORPO PRINCIPAL ---
 
-df = carregar_clientes(token)
+st.title(f"Visão Geral - {nome_usuario}")
+
+# --- PREPARAÇÃO DE DADOS GERAIS ---
+cota_maxima = 100
+envios_hoje = contar_envios_hoje_directus(token)
 campanha = carregar_campanha_ativa(token)
 
-if df.empty:
-    st.warning("⚠️ Sua carteira está vazia ou falha ao carregar.")
-    st.stop()
+# --- SISTEMA DE ABAS ---
+tab_carteira, tab_externo = st.tabs(["📂 Carteira de Clientes", "👽 Prospecção Externa (Upload)"])
 
-st.title(f"Visão Geral - {nome_usuario}")
-k1, k2, k3 = st.columns(3)
-k1.markdown(f"<div class='metric-card'><h3>Total Clientes</h3><h1>{len(df)}</h1></div>", unsafe_allow_html=True)
-inativos = len(df[df['Categoria_Cliente'].astype(str).str.contains('Inativo|Frio|Crítico', case=False)])
-k2.markdown(f"<div class='metric-card'><h3>Oportunidades (Inativos/Crít.)</h3><h1 style='color:#E31937'>{inativos}</h1></div>", unsafe_allow_html=True)
-k3.markdown(f"<div class='metric-card'><h3>Campanha</h3><h4>{campanha['nome_campanha'] if campanha else 'Nenhuma'}</h4></div>", unsafe_allow_html=True)
+# =========================================================
+#  ABA 1: CARTEIRA DE CLIENTES (LÓGICA EXISTENTE)
+# =========================================================
+with tab_carteira:
+    df = carregar_clientes(token)
 
-# --- FILTROS GLOBAIS ---
-st.markdown("### 🔍 Filtros Globais")
-c_f1, c_f2 = st.columns(2)
-with c_f1:
-    opcoes_status = sorted(list(df['Categoria_Cliente'].unique()))
-    todos_status = st.checkbox("Todos os Status", value=True)
-    if todos_status:
-        filtro_status = st.multiselect("Filtrar por Status (Carteira):", options=opcoes_status, default=opcoes_status)
+    if df.empty:
+        st.warning("⚠️ Sua carteira está vazia ou falha ao carregar.")
     else:
-        filtro_status = st.multiselect("Filtrar por Status (Carteira):", options=opcoes_status)
+        k1, k2, k3 = st.columns(3)
+        k1.markdown(f"<div class='metric-card'><h3>Total Clientes</h3><h1>{len(df)}</h1></div>", unsafe_allow_html=True)
+        inativos = len(df[df['Categoria_Cliente'].astype(str).str.contains('Inativo|Frio|Crítico', case=False)])
+        k2.markdown(f"<div class='metric-card'><h3>Oportunidades (Inativos/Crít.)</h3><h1 style='color:#E31937'>{inativos}</h1></div>", unsafe_allow_html=True)
+        k3.markdown(f"<div class='metric-card'><h3>Campanha</h3><h4>{campanha['nome_campanha'] if campanha else 'Nenhuma'}</h4></div>", unsafe_allow_html=True)
 
-with c_f2:
-    opcoes_area = sorted([str(x) for x in df['area_atuacao'].unique() if x is not None])
-    todas_areas = st.checkbox("Todas as Áreas", value=True)
-    if todas_areas:
-        filtro_area = st.multiselect("Filtrar por Área de Atuação:", options=opcoes_area, default=opcoes_area)
-    else:
-        filtro_area = st.multiselect("Filtrar por Área de Atuação:", options=opcoes_area)
+        # --- FILTROS GLOBAIS ---
+        st.markdown("### 🔍 Filtros Globais")
+        c_f1, c_f2 = st.columns(2)
+        with c_f1:
+            opcoes_status = sorted(list(df['Categoria_Cliente'].unique()))
+            todos_status = st.checkbox("Todos os Status", value=True)
+            if todos_status:
+                filtro_status = st.multiselect("Filtrar por Status (Carteira):", options=opcoes_status, default=opcoes_status)
+            else:
+                filtro_status = st.multiselect("Filtrar por Status (Carteira):", options=opcoes_status)
 
-df_filtrado = df.copy()
-if filtro_status:
-    df_filtrado = df_filtrado[df_filtrado['Categoria_Cliente'].isin(filtro_status)]
-if filtro_area:
-    df_filtrado = df_filtrado[df_filtrado['area_atuacao'].astype(str).isin(filtro_area)]
+        with c_f2:
+            opcoes_area = sorted([str(x) for x in df['area_atuacao'].unique() if x is not None])
+            todas_areas = st.checkbox("Todas as Áreas", value=True)
+            if todas_areas:
+                filtro_area = st.multiselect("Filtrar por Área de Atuação:", options=opcoes_area, default=opcoes_area)
+            else:
+                filtro_area = st.multiselect("Filtrar por Área de Atuação:", options=opcoes_area)
 
-if not df_filtrado.empty:
-    df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
+        df_filtrado = df.copy()
+        if filtro_status:
+            df_filtrado = df_filtrado[df_filtrado['Categoria_Cliente'].isin(filtro_status)]
+        if filtro_area:
+            df_filtrado = df_filtrado[df_filtrado['area_atuacao'].astype(str).isin(filtro_area)]
 
-# --- GATILHO DE SELEÇÃO PELA TABELA ---
-if "editor_dados" in st.session_state:
-    changes = st.session_state["editor_dados"]["edited_rows"]
-    for idx, val in changes.items():
-        if val.get("Ação") is True:
+        if not df_filtrado.empty:
+            df_filtrado['label_select'] = df_filtrado['razao_social'] + " (" + df_filtrado['Ultima_Compra'] + ")"
+
+        # --- GATILHO DE SELEÇÃO PELA TABELA ---
+        if "editor_dados" in st.session_state:
+            changes = st.session_state["editor_dados"]["edited_rows"]
+            for idx, val in changes.items():
+                if val.get("Ação") is True:
+                    try:
+                        cliente_alvo = df_filtrado.iloc[int(idx)]['label_select']
+                        if st.session_state.get("sb_principal") != cliente_alvo:
+                            st.session_state["sb_principal"] = cliente_alvo
+                    except Exception: pass
+
+        st.divider()
+
+        # --- BLOCO: DISPARO EM MASSA SEGURO ---
+        with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
+            st.markdown("⚠️ **Regras de Segurança:** O sistema envia 1 e-mail a cada **15~45 segundos** para evitar bloqueios do Google.")
+            
+            # Placeholder para cota visual
+            cota_container_1 = st.empty()
+            
+            def render_cota_1(enviados_sessao=0):
+                # Recalcula com base no global
+                total_real = contar_envios_hoje_directus(token)
+                saldo_real = cota_maxima - total_real
+                with cota_container_1.container():
+                    col_cota1, col_cota2 = st.columns([3, 1])
+                    with col_cota1:
+                        st.progress(min(total_real / cota_maxima, 1.0), text=f"Cota Diária da Equipe: {total_real}/{cota_maxima}")
+                    with col_cota2:
+                        if saldo_real <= 0:
+                            st.error("⛔ Cota Atingida!")
+                        else:
+                            st.success(f"✅ {saldo_real} livres")
+            
+            render_cota_1(0)
+
+            st.divider()
+
+            col_m1, col_m2 = st.columns([1, 1])
+            
+            with col_m1:
+                st.subheader("1. Selecione os Clientes")
+                
+                mask_email = (
+                    df_filtrado['email_1'].str.contains('@', na=False) | 
+                    df_filtrado['email_2'].str.contains('@', na=False) | 
+                    df_filtrado['representante_email'].str.contains('@', na=False)
+                )
+                df_com_email = df_filtrado[mask_email].copy()
+                lista_clientes_validos = df_com_email['label_select'].tolist()
+                
+                container_botoes = st.container()
+                col_b1, col_b2 = container_botoes.columns(2)
+                
+                if col_b1.button("Selecionar Próximos 20"):
+                    if 'status_prospect' in df_com_email.columns:
+                        pendentes = df_com_email[df_com_email['status_prospect'] != 'Contato Feito']
+                        if pendentes.empty:
+                            candidatos = lista_clientes_validos
+                        else:
+                            candidatos = pendentes['label_select'].tolist()
+                    else:
+                        candidatos = lista_clientes_validos
+                        
+                    st.session_state['selected_bulk'] = candidatos[:20]
+
+                if col_b2.button("Limpar Seleção"):
+                    st.session_state['selected_bulk'] = []
+                    
+                selecionados_bulk = st.multiselect(
+                    "Clientes Destinatários:", 
+                    options=lista_clientes_validos,
+                    key='selected_bulk'
+                )
+                
+                qtd_selecionada = len(selecionados_bulk)
+                saldo_atual = cota_maxima - envios_hoje
+                
+                st.caption(f"Selecionados: {qtd_selecionada} empresas")
+
+                if qtd_selecionada > 20:
+                    st.error("⛔ Limite de 20 envios por vez. Reduza a seleção.")
+                elif qtd_selecionada > saldo_atual:
+                    st.error(f"⛔ Você selecionou {qtd_selecionada}, mas só tem {saldo_atual} envios restantes hoje.")
+
+            with col_m2:
+                st.subheader("2. Defina a Mensagem")
+                assunto_padrao = st.text_input("Assunto do E-mail", value=f"Novidades Elo Brindes - {campanha['nome_campanha'] if campanha else 'Especial'}")
+                
+                st.info("💡 **Dica:** Use `{{IMAGEM}}` no texto para colocar a foto no meio.")
+                corpo_padrao = st.text_area("Mensagem ou Código HTML", height=300, value=f"Olá,\n\nConfira as novidades abaixo:\n\n{{IMAGEM}}\n\nAguardo seu retorno.")
+                
+                arquivo_para_anexo = st.file_uploader("Anexar Imagem ou PDF", type=['png', 'jpg', 'jpeg', 'pdf'])
+                
+                botao_disabled = (saldo_atual <= 0) or (qtd_selecionada == 0) or (qtd_selecionada > saldo_atual) or (qtd_selecionada > 20)
+                
+                if st.button("🚀 INICIAR DISPARO SEGURO", type="primary", use_container_width=True, disabled=botao_disabled):
+                    conf_smtp = config_smtp_crud(token, user_email)
+                    
+                    if not conf_smtp or not conf_smtp.get('smtp_pass_app'):
+                        st.error("🚨 Configure o SMTP na barra lateral primeiro!")
+                    else:
+                        st.write("---")
+                        status_box = st.status("🦅 Iniciando sequência de envio...", expanded=True)
+                        bar = st.progress(0)
+                        
+                        enviados = 0
+                        erros = 0
+                        log_erros = []
+                        total_empresas = len(selecionados_bulk)
+                        
+                        for i, nome_cliente in enumerate(selecionados_bulk):
+                            if i > 0:
+                                tempo_espera = random.randint(15, 45)
+                                status_box.update(label=f"⏳ Aguardando {tempo_espera}s para parecer humano...", state="running")
+                                time.sleep(tempo_espera)
+                            
+                            cli_row = df_com_email[df_com_email['label_select'] == nome_cliente].iloc[0]
+                            
+                            nome_base = str(cli_row['razao_social'])
+                            if cli_row.get('representante_nome') and str(cli_row.get('representante_nome')).lower() not in ['none', '', 'nan']:
+                                nome_base = str(cli_row['representante_nome'])
+                            primeiro_nome_formatado = nome_base.split()[0].title() if nome_base else ""
+                            
+                            msg_final = corpo_padrao.replace("{cliente}", primeiro_nome_formatado)
+                            
+                            destinatarios = []
+                            if cli_row['representante_email'] and "@" in str(cli_row['representante_email']):
+                                destinatarios.append({'email': cli_row['representante_email'], 'tipo': 'Representante'})
+                            if cli_row['email_1'] and "@" in str(cli_row['email_1']):
+                                destinatarios.append({'email': cli_row['email_1'], 'tipo': 'Principal'})
+                            if cli_row['email_2'] and "@" in str(cli_row['email_2']):
+                                destinatarios.append({'email': cli_row['email_2'], 'tipo': 'Secundário'})
+
+                            status_box.write(f"📤 Enviando para **{cli_row['razao_social']}**...")
+                            
+                            email_enviado_para_cliente = False
+                            
+                            for dest in destinatarios:
+                                sucesso, msg_log = enviar_email_smtp(token, dest['email'], assunto_padrao, msg_final, conf_smtp, arquivo_anexo=arquivo_para_anexo)
+                                
+                                status_envio_db = "Enviado" if sucesso else f"Erro: {msg_log}"
+                                registrar_log(token, cli_row['pj_id'], assunto_padrao, f"Para: {dest['email']}", status_envio_db)
+
+                                if sucesso:
+                                    email_enviado_para_cliente = True
+                                    enviados += 1
+                                    render_cota_1(enviados)
+                                else:
+                                    erros += 1
+                                    log_erros.append(f"{cli_row['razao_social']} ({dest['email']}): {msg_log}")
+                            
+                            if email_enviado_para_cliente:
+                                dados_update = {"status_prospect": "Contato Feito"}
+                                if not cli_row['tentativa_1']:
+                                    dados_update["tentativa_1"] = datetime.now().strftime("%d/%m - Email em Massa")
+                                atualizar_cliente_directus(token, cli_row['id'], dados_update)
+                            
+                            bar.progress((i + 1) / total_empresas)
+                        
+                        status_box.update(label="✅ Finalizado!", state="complete", expanded=False)
+                        
+                        if enviados > 0:
+                            st.success(f"Processo finalizado! {enviados} e-mails enviados.")
+                            st.balloons()
+                            time.sleep(3)
+                            st.rerun()
+                        
+                        if erros > 0:
+                            st.error(f"Ocorreram {erros} erros. Verifique o console.")
+
+        st.divider()
+
+        col_left, col_right = st.columns([1, 1], gap="large")
+
+        with col_left:
+            st.subheader("🚀 Modo de Ataque (Vendas)")
+            if not df_filtrado.empty:
+                opcoes = sorted(df_filtrado['label_select'].tolist())
+                
+                if "sb_principal" not in st.session_state:
+                    st.session_state["sb_principal"] = "Selecione..."
+                if st.session_state["sb_principal"] not in (["Selecione..."] + opcoes):
+                    st.session_state["sb_principal"] = "Selecione..."
+
+                selecionado = st.selectbox(
+                    "Busque Cliente (Filtrado):", 
+                    ["Selecione..."] + opcoes, 
+                    key="sb_principal" 
+                )
+
+                if selecionado and selecionado != "Selecione...":
+                    cli = df_filtrado[df_filtrado['label_select'] == selecionado].iloc[0]
+                    dias = cli['dias_sem_compra']
+                    area_cli = str(cli['area_atuacao'])
+                    tel_raw = str(cli['telefone_1'])
+                    email_cli = str(cli['email_1'])
+                    tel_clean = limpar_telefone(tel_raw)
+                    
+                    rep_nome = cli.get('representante_nome')
+                    rep_email = cli.get('representante_email')
+                    email2 = cli.get('email_2')
+                    
+                    nome_para_ia = ""
+                    email_para_ia = ""
+                    
+                    if rep_nome and str(rep_nome).strip() != "" and str(rep_nome).lower() != "none":
+                        nome_base_atk = rep_nome
+                    else:
+                        nome_base_atk = cli['razao_social']
+                    
+                    nome_para_ia = str(nome_base_atk).split()[0].title()
+                    
+                    if rep_email and "@" in str(rep_email):
+                        email_para_ia = rep_email
+                    else:
+                        email_para_ia = email_cli
+
+                    with st.spinner("🦅 Consultando catálogo Elo Brindes..."):
+                        sugestoes, motivo_sugestao = gerar_sugestoes_elo_brindes(area_cli)
+                        
+                    html_sugestoes = "".join([f"<div class='sku-item'>{s}</div>" for s in sugestoes])
+                    script_msg = f"Olá! Sou da Elo Brindes. Vi que sua última compra foi há {dias} dias. Temos novidades personalizadas para {area_cli}."
+                    
+                    html_card = f"""
+                    <div class="foco-card">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cli['razao_social'][:25]}...</h2>
+                            <span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cli['pj_id']}</span>
+                        </div>
+                        <div class="foco-grid">
+                            <div class="foco-item"><b>📍 Área</b>{area_cli}</div>
+                            <div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
+                            <div class="foco-item"><b>📧 Email</b>{email_cli[:25]}...</div>
+                            <div class="foco-item"><b>📧 Email 2</b>{email2 if email2 else '-'}</div>
+                            <div class="foco-item"><b>👤 Rep.</b>{rep_nome if rep_nome else '-'}</div>
+                            <div class="foco-item"><b>📧 Rep. Email</b>{rep_email if rep_email else '-'}</div>
+                            <div class="foco-item"><b>📅 Compra</b>{cli['Ultima_Compra']}</div>
+                            <div class="foco-item"><b>⚠️ Status</b>{cli['Categoria_Cliente']}</div>
+                        </div>
+                        <div class="sugestao-box">
+                            <div class="sugestao-title">🎯 Sugestão Elo ({area_cli})</div>
+                            <div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
+                            {html_sugestoes}
+                        </div>
+                        <div class="script-box">
+                            <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script WhatsApp:</b>
+                            "{script_msg}"
+                        </div>
+                    </div>
+                    """
+                    st.markdown(html_card, unsafe_allow_html=True)
+                    
+                    b1, b2, b3 = st.columns(3)
+                    with b1:
+                        if tel_clean and len(tel_clean) >= 10:
+                            link_wpp = f"https://wa.me/55{tel_clean}?text={urllib.parse.quote(script_msg)}"
+                            st.link_button("💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
+                    with b2:
+                        if email_para_ia and "@" in str(email_para_ia):
+                            link_gmail = f"https://mail.google.com/mail/?view=cm&fs=1&to={email_para_ia}&su=Contato Elo&body={script_msg}"
+                            st.link_button("📧 Gmail", link_gmail, use_container_width=True)
+                    with b3:
+                        if st.button("✨ IA Magica", use_container_width=True):
+                            if not groq_client: 
+                                st.error("Sem Chave IA")
+                            else:
+                                with st.spinner(f"🤖 Escrevendo e-mail para {nome_para_ia}..."):
+                                    subj, body = gerar_email_ia(nome_para_ia, area_cli, cli['Ultima_Compra'], campanha, nome_usuario, cargo_usuario)
+                                    st.session_state['ia_result'] = {'subj': subj, 'body': body, 'email': email_para_ia}
+                    
+                    st.write("")
+                    if st.button("✅ Marcar 'Contato Feito'", key="btn_check_atk", use_container_width=True):
+                        update_payload = {"status_prospect": "Contato Feito"}
+                        if not cli['tentativa_1']:
+                            update_payload["tentativa_1"] = datetime.now().strftime("%d/%m - Manual")
+                        
+                        if atualizar_cliente_directus(token, cli['id'], update_payload):
+                            st.toast("✅ Status atualizado com sucesso!", icon="🎉")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("Erro ao atualizar status.")
+
+                    if 'ia_result' in st.session_state:
+                        res = st.session_state['ia_result']
+                        assinatura_automatica = f"\n\nAtenciosamente,\n\n{nome_usuario}\nElo Brindes"
+                        corpo_final = res['body'] + assinatura_automatica
+                        st.info(f"Assunto: {res['subj']}")
+                        st.text_area(f"Prévia da Mensagem (Para: {res['email']}):", value=corpo_final, height=200, disabled=True)
+                        subject_enc = urllib.parse.quote(res['subj'])
+                        body_enc = urllib.parse.quote(corpo_final)
+                        link_gmail_final = f"https://mail.google.com/mail/?view=cm&fs=1&to={res['email']}&su={subject_enc}&body={body_enc}"
+                        st.link_button(f"📧 Abrir no Gmail (Enviar para {res['email']})", link_gmail_final, type="primary", use_container_width=True)
+
+            else:
+                st.info("Nenhum cliente encontrado com os filtros atuais.")
+
+        with col_right:
+            st.subheader("📝 Modo Atualização")
+            def checar_pendencia(row):
+                t = limpar_telefone(row['telefone_1'])
+                e = str(row['email_1'])
+                if not t or len(t) < 8: return True
+                if not e or '@' not in e or 'nan' in e: return True
+                return False
+            
+            if not df_filtrado.empty:
+                df_filtrado['pendente'] = df_filtrado.apply(checar_pendencia, axis=1)
+                df_pend = df_filtrado[df_filtrado['pendente'] == True].copy()
+                
+                if df_pend.empty:
+                    st.success("✅ Nenhum cadastro pendente nos filtros selecionados!")
+                else:
+                    df_pend['lbl'] = df_pend['razao_social'] + " (Pendente)"
+                    sel_up = st.selectbox("Atualizar:", ["Selecione..."] + sorted(df_pend['lbl'].tolist()))
+                    
+                    if sel_up and sel_up != "Selecione...":
+                        cli_up = df_pend[df_pend['lbl'] == sel_up].iloc[0]
+                        st.markdown(f"""
+                        <div class="foco-card" style="border-left: 6px solid #FFD700;">
+                            <h3 style='color:#FFD700'>⚠️ Dados Faltantes</h3>
+                            <h2 style='color:white'>{cli_up['razao_social']}</h2>
+                            <div class="foco-grid">
+                                <div class="foco-item"><b>CNPJ</b> {cli_up['cnpj']}</div>
+                                <div class="foco-item" style="color:#FFD700"><b>Tel</b> {cli_up['telefone_1'] or 'VAZIO'}</div>
+                                <div class="foco-item" style="color:#FFD700"><b>Email</b> {cli_up['email_1'] or 'VAZIO'}</div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        if st.button("✅ Marcar 'Contato Feito'", key="btn_check_upd", use_container_width=True):
+                            update_payload = {"status_prospect": "Contato Feito"}
+                            if not cli_up['tentativa_1']:
+                                update_payload["tentativa_1"] = datetime.now().strftime("%d/%m - Manual")
+                            
+                            if atualizar_cliente_directus(token, cli_up['id'], update_payload):
+                                st.toast("✅ Status atualizado com sucesso!", icon="🎉")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("Erro ao atualizar status.")
+            else:
+                st.write("Sem dados.")
+
+        st.divider()
+        st.subheader("📋 Lista Geral (Editável - Auto Save)")
+
+        todas_colunas = list(df.columns)
+
+        CONFIG_FILE = "grid_config.json"
+        cols_default = [c for c in ['pj_id', 'razao_social', 'status_prospect', 'email_2', 'representante_nome', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'telefone_1'] if c in todas_colunas]
+
+        saved_cols = cols_default
+        if os.path.exists(CONFIG_FILE):
             try:
-                cliente_alvo = df_filtrado.iloc[int(idx)]['label_select']
-                if st.session_state.get("sb_principal") != cliente_alvo:
-                    st.session_state["sb_principal"] = cliente_alvo
-            except Exception: pass
+                with open(CONFIG_FILE, 'r') as f:
+                    loaded = json.load(f)
+                    saved_cols = [c for c in loaded if c in todas_colunas]
+                    if not saved_cols: saved_cols = cols_default
+            except:
+                saved_cols = cols_default
 
-st.divider()
+        colunas_selecionadas = st.multiselect(
+            "Selecione as colunas para exibir/editar (Sua escolha fica salva):",
+            options=todas_colunas,
+            default=saved_cols
+        )
 
-# --- BLOCO: DISPARO EM MASSA SEGURO ---
-with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
-    st.markdown("⚠️ **Regras de Segurança:** O sistema envia 1 e-mail a cada **15~45 segundos** para evitar bloqueios do Google.")
+        if colunas_selecionadas != saved_cols:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(colunas_selecionadas, f)
+
+        if not df_filtrado.empty:
+            config_cols = {
+                "pj_id": st.column_config.TextColumn("ID Loja", disabled=True),
+                "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
+                "Categoria_Cliente": st.column_config.TextColumn("Status", disabled=True),
+                "Ultima_Compra": st.column_config.TextColumn("Ult. Compra", disabled=True),
+                "GAP (dias)": st.column_config.NumberColumn("GAP (dias)", disabled=True),
+                "status_prospect": st.column_config.SelectboxColumn(
+                    "Status Prospecção",
+                    options=["Não atende", "Retornar", "Tel. Incorreto", "Contato Feito", "Enviado para o RD", "Status Final"],
+                    width="medium",
+                    required=False
+                ),
+                "id": None, 
+                "Ação": st.column_config.CheckboxColumn("➡️ Abrir", help="Clique para abrir os dados deste cliente lá em cima", default=False)
+            }
+
+            df_filtrado.insert(0, "Ação", False)
+
+            edicoes = st.data_editor(
+                df_filtrado[["Ação"] + colunas_selecionadas + ['id']], 
+                key="editor_dados",
+                hide_index=True,
+                column_config=config_cols,
+                use_container_width=True,
+                num_rows="fixed"
+            )
+
+            if "editor_dados" in st.session_state and st.session_state["editor_dados"]["edited_rows"]:
+                alteracoes = st.session_state["editor_dados"]["edited_rows"]
+                tem_edicao_real = False
+                for idx, mudanca in alteracoes.items():
+                    if any(k != "Ação" for k in mudanca.keys()):
+                        tem_edicao_real = True
+                        break
+                
+                if tem_edicao_real:
+                    sucessos = 0
+                    erros = 0
+                    for i, mudancas in alteracoes.items():
+                        dados_limpos = {k: v for k, v in mudancas.items() if k not in ['GAP (dias)', 'Ultima_Compra', 'Categoria_Cliente', 'label_select', 'data_temp', 'dias_sem_compra', 'pendente', 'Ação']}
+                        if dados_limpos:
+                            try:
+                                id_cliente = df_filtrado.iloc[i]['id']
+                                if atualizar_cliente_directus(token, id_cliente, dados_limpos):
+                                    sucessos += 1
+                                else:
+                                    erros += 1
+                            except Exception as e:
+                                erros += 1
+                    
+                    if sucessos > 0:
+                        st.toast(f"✅ {sucessos} alterações salvas automaticamente!", icon="💾")
+                        time.sleep(1) 
+                        st.rerun()
+
+# =========================================================
+#  ABA 2: PROSPECÇÃO EXTERNA (NOVO)
+# =========================================================
+with tab_externo:
+    st.subheader("👽 Disparo para Lista Externa (Leads)")
+    st.markdown("Carregue uma planilha Excel/CSV ou cole e-mails para prospecção fria.")
     
-    # 1. VERIFICAÇÃO DE COTA DIÁRIA (COM ATUALIZAÇÃO VISUAL)
-    cota_maxima = 100
-    envios_hoje = contar_envios_hoje_directus(token)
+    # Placeholder para cota visual ABA 2
+    cota_container_2 = st.empty()
     
-    # Placeholder para permitir atualização da cota em tempo real
-    cota_container = st.empty()
-    
-    def render_cota(enviados_sessao=0):
-        total_real = envios_hoje + enviados_sessao
+    def render_cota_2(enviados_sessao=0):
+        total_real = contar_envios_hoje_directus(token)
         saldo_real = cota_maxima - total_real
-        with cota_container.container():
+        with cota_container_2.container():
             col_cota1, col_cota2 = st.columns([3, 1])
             with col_cota1:
-                st.progress(min(total_real / cota_maxima, 1.0), text=f"Cota Diária da Equipe: {total_real}/{cota_maxima} envios hoje")
+                st.progress(min(total_real / cota_maxima, 1.0), text=f"Cota Diária da Equipe: {total_real}/{cota_maxima}")
             with col_cota2:
                 if saldo_real <= 0:
                     st.error("⛔ Cota Atingida!")
                 else:
                     st.success(f"✅ {saldo_real} livres")
     
-    # Renderiza estado inicial
-    render_cota(0)
-
+    render_cota_2(0)
+    
     st.divider()
 
-    col_m1, col_m2 = st.columns([1, 1])
+    c_ext1, c_ext2 = st.columns([1, 1], gap="large")
     
-    with col_m1:
-        st.subheader("1. Selecione os Clientes")
+    with c_ext1:
+        st.markdown("#### 1. Importar Dados")
         
-        # Filtra empresas com e-mail válido
-        mask_email = (
-            df_filtrado['email_1'].str.contains('@', na=False) | 
-            df_filtrado['email_2'].str.contains('@', na=False) | 
-            df_filtrado['representante_email'].str.contains('@', na=False)
-        )
-        df_com_email = df_filtrado[mask_email].copy()
-        lista_clientes_validos = df_com_email['label_select'].tolist()
+        tab_up_file, tab_up_txt = st.tabs(["📁 Upload Arquivo", "✍️ Colar Manual"])
         
-        container_botoes = st.container()
-        col_b1, col_b2 = container_botoes.columns(2)
+        df_externo = pd.DataFrame()
         
-        # Botões de seleção rápida
-        if col_b1.button("Selecionar Próximos 20"):
-            if 'status_prospect' in df_com_email.columns:
-                pendentes = df_com_email[df_com_email['status_prospect'] != 'Contato Feito']
-                if pendentes.empty:
-                    candidatos = lista_clientes_validos
-                else:
-                    candidatos = pendentes['label_select'].tolist()
-            else:
-                candidatos = lista_clientes_validos
-                
-            st.session_state['selected_bulk'] = candidatos[:20]
-
-        if col_b2.button("Limpar Seleção"):
-            st.session_state['selected_bulk'] = []
-            
-        selecionados_bulk = st.multiselect(
-            "Clientes Destinatários:", 
-            options=lista_clientes_validos,
-            key='selected_bulk'
-        )
-        
-        qtd_selecionada = len(selecionados_bulk)
-        saldo_atual = cota_maxima - envios_hoje
-        
-        st.caption(f"Selecionados: {qtd_selecionada} empresas")
-
-        # Alertas de quantidade
-        if qtd_selecionada > 20:
-            st.error("⛔ Limite de 20 envios por vez. Reduza a seleção.")
-        elif qtd_selecionada > saldo_atual:
-            st.error(f"⛔ Você selecionou {qtd_selecionada}, mas só tem {saldo_atual} envios restantes hoje.")
-
-    with col_m2:
-        st.subheader("2. Defina a Mensagem")
-        assunto_padrao = st.text_input("Assunto do E-mail", value=f"Novidades Elo Brindes - {campanha['nome_campanha'] if campanha else 'Especial'}")
-        
-        st.info("💡 **Dica de Imagem:** Para colocar a imagem no meio do texto, escreva `{{IMAGEM}}` onde quer que ela apareça e anexe a foto abaixo.")
-        corpo_padrao = st.text_area("Mensagem ou Código HTML", height=300, value=f"Olá,\n\nConfira as novidades abaixo:\n\n{{IMAGEM}}\n\nAguardo seu retorno.")
-        
-        # --- CAMPO DE ANEXO ---
-        arquivo_para_anexo = st.file_uploader("Anexar Imagem ou PDF", type=['png', 'jpg', 'jpeg', 'pdf'])
-        
-        # TRAVA O BOTÃO SE ESTIVER SEM SALDO OU ACIMA DE 20
-        botao_disabled = (saldo_atual <= 0) or (qtd_selecionada == 0) or (qtd_selecionada > saldo_atual) or (qtd_selecionada > 20)
-        
-        if st.button("🚀 INICIAR DISPARO SEGURO", type="primary", use_container_width=True, disabled=botao_disabled):
-            conf_smtp = config_smtp_crud(token, user_email)
-            
-            if not conf_smtp or not conf_smtp.get('smtp_pass_app'):
-                st.error("🚨 Configure o SMTP na barra lateral primeiro!")
-            else:
-                st.write("---")
-                status_box = st.status("🦅 Iniciando sequência de envio...", expanded=True)
-                bar = st.progress(0)
-                
-                enviados = 0
-                erros = 0
-                log_erros = []
-                total_empresas = len(selecionados_bulk)
-                
-                for i, nome_cliente in enumerate(selecionados_bulk):
-                    # --- PAUSA DE SEGURANÇA (RANDOMICA) ---
-                    # Pula o delay no primeiro email, aplica nos seguintes
-                    if i > 0:
-                        tempo_espera = random.randint(15, 45) # ENTRE 15 e 45 SEGUNDOS
-                        status_box.update(label=f"⏳ Aguardando {tempo_espera}s para parecer humano (Google Anti-Spam)...", state="running")
-                        time.sleep(tempo_espera)
-                    
-                    # --- PREPARAÇÃO DO EMAIL ---
-                    cli_row = df_com_email[df_com_email['label_select'] == nome_cliente].iloc[0]
-                    
-                    # Formatação de Nome
-                    nome_base = str(cli_row['razao_social'])
-                    if cli_row.get('representante_nome') and str(cli_row.get('representante_nome')).lower() not in ['none', '', 'nan']:
-                        nome_base = str(cli_row['representante_nome'])
-                    primeiro_nome_formatado = nome_base.split()[0].title() if nome_base else ""
-                    
-                    # Substituição no texto
-                    msg_final = corpo_padrao.replace("{cliente}", primeiro_nome_formatado)
-                    
-                    # Coleta destinatários
-                    destinatarios = []
-                    if cli_row['representante_email'] and "@" in str(cli_row['representante_email']):
-                        destinatarios.append({'email': cli_row['representante_email'], 'tipo': 'Representante'})
-                    if cli_row['email_1'] and "@" in str(cli_row['email_1']):
-                         destinatarios.append({'email': cli_row['email_1'], 'tipo': 'Principal'})
-                    if cli_row['email_2'] and "@" in str(cli_row['email_2']):
-                        destinatarios.append({'email': cli_row['email_2'], 'tipo': 'Secundário'})
-
-                    # --- ENVIO ---
-                    status_box.write(f"📤 Enviando para **{cli_row['razao_social']}**...")
-                    
-                    email_enviado_para_cliente = False # Flag para saber se enviou pelo menos 1
-                    
-                    for dest in destinatarios:
-                        # Passa o anexo se existir
-                        sucesso, msg_log = enviar_email_smtp(token, dest['email'], assunto_padrao, msg_final, conf_smtp, arquivo_anexo=arquivo_para_anexo)
-                        
-                        # LOG NO DIRECTUS (CRÍTICO PARA CONTAGEM)
-                        status_envio_db = "Enviado" if sucesso else f"Erro: {msg_log}"
-                        registrar_log(token, cli_row['pj_id'], assunto_padrao, f"Para: {dest['email']}", status_envio_db)
-
-                        if sucesso:
-                            email_enviado_para_cliente = True
-                            enviados += 1
-                            # ATUALIZA A BARRA DE COTA VISUALMENTE AGORA
-                            render_cota(enviados)
-                        else:
-                            erros += 1
-                            log_erros.append(f"{cli_row['razao_social']} ({dest['email']}): {msg_log}")
-                    
-                    # --- ATUALIZAÇÃO AUTOMÁTICA DO STATUS ---
-                    if email_enviado_para_cliente:
-                        dados_update = {"status_prospect": "Contato Feito"}
-                        
-                        # Mantém a lógica da tentativa_1 se estiver vazia
-                        if not cli_row['tentativa_1']:
-                            dados_update["tentativa_1"] = datetime.now().strftime("%d/%m - Email em Massa")
-                        
-                        atualizar_cliente_directus(token, cli_row['id'], dados_update)
-                    
-                    bar.progress((i + 1) / total_empresas)
-                
-                status_box.update(label="✅ Finalizado!", state="complete", expanded=False)
-                
-                if enviados > 0:
-                    st.success(f"Processo finalizado! {enviados} e-mails enviados.")
-                    st.balloons()
-                    time.sleep(3)
-                    st.rerun() # Recarrega para atualizar a cota
-                
-                if erros > 0:
-                    st.error(f"Ocorreram {erros} erros. Verifique o console.")
-
-st.divider()
-
-col_left, col_right = st.columns([1, 1], gap="large")
-
-with col_left:
-    st.subheader("🚀 Modo de Ataque (Vendas)")
-    if not df_filtrado.empty:
-        opcoes = sorted(df_filtrado['label_select'].tolist())
-        
-        if "sb_principal" not in st.session_state:
-            st.session_state["sb_principal"] = "Selecione..."
-        if st.session_state["sb_principal"] not in (["Selecione..."] + opcoes):
-             st.session_state["sb_principal"] = "Selecione..."
-
-        selecionado = st.selectbox(
-            "Busque Cliente (Filtrado):", 
-            ["Selecione..."] + opcoes, 
-            key="sb_principal" 
-        )
-
-        if selecionado and selecionado != "Selecione...":
-            cli = df_filtrado[df_filtrado['label_select'] == selecionado].iloc[0]
-            dias = cli['dias_sem_compra']
-            area_cli = str(cli['area_atuacao'])
-            tel_raw = str(cli['telefone_1'])
-            email_cli = str(cli['email_1'])
-            tel_clean = limpar_telefone(tel_raw)
-            
-            rep_nome = cli.get('representante_nome')
-            rep_email = cli.get('representante_email')
-            email2 = cli.get('email_2')
-            
-            # --- LÓGICA DE PRIORIDADE E FORMATAÇÃO PARA MODO ATAQUE ---
-            nome_para_ia = ""
-            email_para_ia = ""
-            
-            # 1. Escolhe o nome base (Rep ou Razao)
-            if rep_nome and str(rep_nome).strip() != "" and str(rep_nome).lower() != "none":
-                nome_base_atk = rep_nome
-            else:
-                nome_base_atk = cli['razao_social']
-            
-            # 2. Formata (Caio)
-            nome_para_ia = str(nome_base_atk).split()[0].title()
-            
-            # 3. Escolhe o e-mail
-            if rep_email and "@" in str(rep_email):
-                email_para_ia = rep_email
-            else:
-                email_para_ia = email_cli
-
-            with st.spinner("🦅 Consultando catálogo Elo Brindes..."):
-                 sugestoes, motivo_sugestao = gerar_sugestoes_elo_brindes(area_cli)
-                 
-            html_sugestoes = "".join([f"<div class='sku-item'>{s}</div>" for s in sugestoes])
-            script_msg = f"Olá! Sou da Elo Brindes. Vi que sua última compra foi há {dias} dias. Temos novidades personalizadas para {area_cli}."
-            
-            html_card = f"""
-            <div class="foco-card">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <h2 style='margin:0; color: #FFF; font-size: 20px;'>🏢 {cli['razao_social'][:25]}...</h2>
-                    <span style='background:#333; padding:2px 6px; border-radius:4px; font-size:11px; color:#aaa;'>ID: {cli['pj_id']}</span>
-                </div>
-                <div class="foco-grid">
-                    <div class="foco-item"><b>📍 Área</b>{area_cli}</div>
-                    <div class="foco-item"><b>📞 Tel</b>{tel_raw}</div>
-                    <div class="foco-item"><b>📧 Email</b>{email_cli[:25]}...</div>
-                    <div class="foco-item"><b>📧 Email 2</b>{email2 if email2 else '-'}</div>
-                    <div class="foco-item"><b>👤 Rep.</b>{rep_nome if rep_nome else '-'}</div>
-                    <div class="foco-item"><b>📧 Rep. Email</b>{rep_email if rep_email else '-'}</div>
-                    <div class="foco-item"><b>📅 Compra</b>{cli['Ultima_Compra']}</div>
-                    <div class="foco-item"><b>⚠️ Status</b>{cli['Categoria_Cliente']}</div>
-                </div>
-                <div class="sugestao-box">
-                    <div class="sugestao-title">🎯 Sugestão Elo ({area_cli})</div>
-                    <div style="margin-bottom:6px; font-size:12px; color:#ccc;"><i>💡 {motivo_sugestao}</i></div>
-                    {html_sugestoes}
-                </div>
-                <div class="script-box">
-                    <b style="color:#E31937; display:block; margin-bottom:5px; text-transform:uppercase; font-size:11px;">🗣️ Script WhatsApp:</b>
-                    "{script_msg}"
-                </div>
-            </div>
-            """
-            st.markdown(html_card, unsafe_allow_html=True)
-            
-            b1, b2, b3 = st.columns(3)
-            with b1:
-                if tel_clean and len(tel_clean) >= 10:
-                    link_wpp = f"https://wa.me/55{tel_clean}?text={urllib.parse.quote(script_msg)}"
-                    st.link_button("💬 WhatsApp", link_wpp, type="primary", use_container_width=True)
-            with b2:
-                if email_para_ia and "@" in str(email_para_ia):
-                    link_gmail = f"https://mail.google.com/mail/?view=cm&fs=1&to={email_para_ia}&su=Contato Elo&body={script_msg}"
-                    st.link_button("📧 Gmail", link_gmail, use_container_width=True)
-            with b3:
-                if st.button("✨ IA Magica", use_container_width=True):
-                    if not groq_client: 
-                        st.error("Sem Chave IA")
+        with tab_up_file:
+            uploaded_file = st.file_uploader("Upload Excel (.xlsx) ou CSV", type=['xlsx', 'csv'])
+            if uploaded_file:
+                try:
+                    if uploaded_file.name.endswith('.csv'):
+                        df_externo = pd.read_csv(uploaded_file)
                     else:
-                        with st.spinner(f"🤖 Escrevendo e-mail para {nome_para_ia}..."):
-                            # Passa o nome JÁ formatado (Ex: Caio)
-                            subj, body = gerar_email_ia(nome_para_ia, area_cli, cli['Ultima_Compra'], campanha, nome_usuario, cargo_usuario)
-                            st.session_state['ia_result'] = {'subj': subj, 'body': body, 'email': email_para_ia}
-            
-            # --- BOTÃO DE AÇÃO RÁPIDA (MODO ATAQUE) ---
-            st.write("")
-            if st.button("✅ Marcar 'Contato Feito'", key="btn_check_atk", use_container_width=True):
-                update_payload = {"status_prospect": "Contato Feito"}
-                if not cli['tentativa_1']:
-                    update_payload["tentativa_1"] = datetime.now().strftime("%d/%m - Manual")
-                
-                if atualizar_cliente_directus(token, cli['id'], update_payload):
-                    st.toast("✅ Status atualizado com sucesso!", icon="🎉")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("Erro ao atualizar status.")
+                        df_externo = pd.read_excel(uploaded_file)
+                    
+                    # Normaliza colunas
+                    cols_lower = {c: c.lower().strip() for c in df_externo.columns}
+                    df_externo.rename(columns=cols_lower, inplace=True)
+                    
+                    # Tenta achar colunas chaves
+                    col_email = next((c for c in df_externo.columns if 'email' in c or 'e-mail' in c), None)
+                    col_nome = next((c for c in df_externo.columns if 'nome' in c or 'name' in c), None)
+                    col_empresa = next((c for c in df_externo.columns if 'empresa' in c or 'company' in c or 'razao' in c), None)
+                    
+                    if col_email:
+                        df_externo = df_externo.rename(columns={col_email: 'Email'})
+                        if col_nome: df_externo = df_externo.rename(columns={col_nome: 'Nome'})
+                        if col_empresa: df_externo = df_externo.rename(columns={col_empresa: 'Empresa'})
+                        
+                        # Garante colunas mínimas
+                        if 'Nome' not in df_externo.columns: df_externo['Nome'] = 'Parceiro'
+                        if 'Empresa' not in df_externo.columns: df_externo['Empresa'] = ''
+                        
+                        df_externo = df_externo[['Nome', 'Email', 'Empresa']].dropna(subset=['Email'])
+                        df_externo = df_externo[df_externo['Email'].astype(str).str.contains('@')]
+                    else:
+                        st.error("❌ Não encontrei uma coluna de E-mail no arquivo.")
+                        df_externo = pd.DataFrame()
+                        
+                except Exception as e:
+                    st.error(f"Erro ao ler arquivo: {e}")
 
-            if 'ia_result' in st.session_state:
-                res = st.session_state['ia_result']
-                
-                # ASSINATURA AUTOMATICA - REMOVIDO CARGO
-                assinatura_automatica = f"\n\nAtenciosamente,\n\n{nome_usuario}\nElo Brindes"
-                corpo_final = res['body'] + assinatura_automatica
-                
-                st.info(f"Assunto: {res['subj']}")
-                st.text_area(f"Prévia da Mensagem (Para: {res['email']}):", value=corpo_final, height=200, disabled=True)
-                
-                subject_enc = urllib.parse.quote(res['subj'])
-                body_enc = urllib.parse.quote(corpo_final)
-                
-                link_gmail_final = f"https://mail.google.com/mail/?view=cm&fs=1&to={res['email']}&su={subject_enc}&body={body_enc}"
-                
-                st.link_button(f"📧 Abrir no Gmail (Enviar para {res['email']})", link_gmail_final, type="primary", use_container_width=True)
-
-    else:
-        st.info("Nenhum cliente encontrado com os filtros atuais.")
-
-with col_right:
-    st.subheader("📝 Modo Atualização")
-    def checar_pendencia(row):
-        t = limpar_telefone(row['telefone_1'])
-        e = str(row['email_1'])
-        if not t or len(t) < 8: return True
-        if not e or '@' not in e or 'nan' in e: return True
-        return False
-    
-    if not df_filtrado.empty:
-        df_filtrado['pendente'] = df_filtrado.apply(checar_pendencia, axis=1)
-        df_pend = df_filtrado[df_filtrado['pendente'] == True].copy()
+        with tab_up_txt:
+            txt_emails = st.text_area("Cole a lista (Formato: email, nome, empresa)", height=150, help="Um por linha. Ex:\njoao@teste.com, João, Padaria Silva\nmaria@teste.com, Maria,")
+            if txt_emails:
+                lines = txt_emails.split('\n')
+                data_manual = []
+                for ln in lines:
+                    parts = ln.split(',')
+                    if len(parts) >= 1 and '@' in parts[0]:
+                        email = parts[0].strip()
+                        nome = parts[1].strip() if len(parts) > 1 else "Parceiro"
+                        empresa = parts[2].strip() if len(parts) > 2 else ""
+                        data_manual.append({'Email': email, 'Nome': nome, 'Empresa': empresa})
+                if data_manual:
+                    df_externo = pd.DataFrame(data_manual)
         
-        if df_pend.empty:
-            st.success("✅ Nenhum cadastro pendente nos filtros selecionados!")
+        if not df_externo.empty:
+            st.info(f"📋 {len(df_externo)} contatos carregados.")
+            st.dataframe(df_externo, height=200, use_container_width=True)
         else:
-            df_pend['lbl'] = df_pend['razao_social'] + " (Pendente)"
-            sel_up = st.selectbox("Atualizar:", ["Selecione..."] + sorted(df_pend['lbl'].tolist()))
-            
-            if sel_up and sel_up != "Selecione...":
-                cli_up = df_pend[df_pend['lbl'] == sel_up].iloc[0]
-                st.markdown(f"""
-                <div class="foco-card" style="border-left: 6px solid #FFD700;">
-                    <h3 style='color:#FFD700'>⚠️ Dados Faltantes</h3>
-                    <h2 style='color:white'>{cli_up['razao_social']}</h2>
-                    <div class="foco-grid">
-                        <div class="foco-item"><b>CNPJ</b> {cli_up['cnpj']}</div>
-                        <div class="foco-item" style="color:#FFD700"><b>Tel</b> {cli_up['telefone_1'] or 'VAZIO'}</div>
-                        <div class="foco-item" style="color:#FFD700"><b>Email</b> {cli_up['email_1'] or 'VAZIO'}</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+            st.info("Aguardando dados...")
+
+    with c_ext2:
+        st.markdown("#### 2. Configurar Disparo")
+        
+        assunto_ext = st.text_input("Assunto", value="Oportunidade de Parceria", key="ass_ext")
+        corpo_ext = st.text_area("Mensagem HTML", height=250, value="Olá {nome},\n\nVi que a {empresa} tem grande potencial.\n\n{{IMAGEM}}\n\nAbraço!", key="body_ext")
+        
+        anexo_ext = st.file_uploader("Anexo (Imagem/PDF)", type=['png', 'jpg', 'pdf'], key="anexo_ext")
+        
+        st.caption("Variáveis disponíveis: {nome}, {empresa}, {{IMAGEM}}")
+        
+        saldo_atual_2 = cota_maxima - contar_envios_hoje_directus(token)
+        qtd_ext = len(df_externo)
+        
+        btn_ext_disabled = (qtd_ext == 0) or (saldo_atual_2 <= 0) or (qtd_ext > saldo_atual_2)
+        
+        if st.button("🚀 ENVIAR CAMPANHA EXTERNA", type="primary", use_container_width=True, disabled=btn_ext_disabled):
+            conf_smtp = config_smtp_crud(token, user_email)
+            if not conf_smtp:
+                st.error("Configure SMTP primeiro.")
+            else:
+                status_box_2 = st.status("Iniciando Prospecção Fria...", expanded=True)
+                bar_2 = st.progress(0)
+                env_2 = 0
+                err_2 = 0
                 
-                # --- BOTÃO DE AÇÃO RÁPIDA (MODO ATUALIZAÇÃO) ---
-                if st.button("✅ Marcar 'Contato Feito'", key="btn_check_upd", use_container_width=True):
-                    update_payload = {"status_prospect": "Contato Feito"}
-                    if not cli_up['tentativa_1']:
-                        update_payload["tentativa_1"] = datetime.now().strftime("%d/%m - Manual")
+                for i, row in df_externo.iterrows():
+                    if i > 0:
+                        ts = random.randint(20, 50) # Delay um pouco maior para frios
+                        status_box_2.update(label=f"⏳ Delay de segurança: {ts}s...", state="running")
+                        time.sleep(ts)
                     
-                    if atualizar_cliente_directus(token, cli_up['id'], update_payload):
-                        st.toast("✅ Status atualizado com sucesso!", icon="🎉")
-                        time.sleep(1)
-                        st.rerun()
+                    nome_format = str(row['Nome']).title()
+                    empresa_format = str(row['Empresa']).title()
+                    
+                    msg_final_ext = corpo_ext.replace("{nome}", nome_format).replace("{empresa}", empresa_format)
+                    
+                    status_box_2.write(f"Enviando para {row['Email']}...")
+                    
+                    ok, log_msg = enviar_email_smtp(token, row['Email'], assunto_ext, msg_final_ext, conf_smtp, anexo_ext)
+                    
+                    # LOG NO DIRECTUS (PJ_ID = None ou 0 para indicar externo)
+                    status_log = "Enviado [EXTERNO]" if ok else f"Erro [EXTERNO]: {log_msg}"
+                    registrar_log(token, "0", assunto_ext, f"Lead: {row['Email']}", status_log)
+                    
+                    if ok:
+                        env_2 += 1
+                        render_cota_2(env_2)
                     else:
-                        st.error("Erro ao atualizar status.")
-    else:
-        st.write("Sem dados.")
-
-st.divider()
-st.subheader("📋 Lista Geral (Editável - Auto Save)")
-
-todas_colunas = list(df.columns)
-
-CONFIG_FILE = "grid_config.json"
-cols_default = [c for c in ['pj_id', 'razao_social', 'status_prospect', 'email_2', 'representante_nome', 'Categoria_Cliente', 'area_atuacao', 'Ultima_Compra', 'telefone_1'] if c in todas_colunas]
-
-saved_cols = cols_default
-if os.path.exists(CONFIG_FILE):
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            loaded = json.load(f)
-            saved_cols = [c for c in loaded if c in todas_colunas]
-            if not saved_cols: saved_cols = cols_default
-    except:
-        saved_cols = cols_default
-
-colunas_selecionadas = st.multiselect(
-    "Selecione as colunas para exibir/editar (Sua escolha fica salva):",
-    options=todas_colunas,
-    default=saved_cols
-)
-
-if colunas_selecionadas != saved_cols:
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(colunas_selecionadas, f)
-
-if not df_filtrado.empty:
-    config_cols = {
-        "pj_id": st.column_config.TextColumn("ID Loja", disabled=True),
-        "razao_social": st.column_config.TextColumn("Razão Social", disabled=True),
-        "Categoria_Cliente": st.column_config.TextColumn("Status", disabled=True),
-        "Ultima_Compra": st.column_config.TextColumn("Ult. Compra", disabled=True),
-        "GAP (dias)": st.column_config.NumberColumn("GAP (dias)", disabled=True),
-        "status_prospect": st.column_config.SelectboxColumn(
-            "Status Prospecção",
-            options=["Não atende", "Retornar", "Tel. Incorreto", "Contato Feito", "Enviado para o RD", "Status Final"],
-            width="medium",
-            required=False
-        ),
-        "id": None, 
-        "Ação": st.column_config.CheckboxColumn("➡️ Abrir", help="Clique para abrir os dados deste cliente lá em cima", default=False)
-    }
-
-    df_filtrado.insert(0, "Ação", False)
-
-    edicoes = st.data_editor(
-        df_filtrado[["Ação"] + colunas_selecionadas + ['id']], 
-        key="editor_dados",
-        hide_index=True,
-        column_config=config_cols,
-        use_container_width=True,
-        num_rows="fixed"
-    )
-
-    if "editor_dados" in st.session_state and st.session_state["editor_dados"]["edited_rows"]:
-        alteracoes = st.session_state["editor_dados"]["edited_rows"]
-        
-        tem_edicao_real = False
-        for idx, mudanca in alteracoes.items():
-            if any(k != "Ação" for k in mudanca.keys()):
-                tem_edicao_real = True
-                break
-        
-        if tem_edicao_real:
-            sucessos = 0
-            erros = 0
-            
-            for i, mudancas in alteracoes.items():
-                dados_limpos = {k: v for k, v in mudancas.items() if k not in ['GAP (dias)', 'Ultima_Compra', 'Categoria_Cliente', 'label_select', 'data_temp', 'dias_sem_compra', 'pendente', 'Ação']}
+                        err_2 += 1
+                        
+                    bar_2.progress((i+1)/len(df_externo))
                 
-                if dados_limpos:
-                    try:
-                        id_cliente = df_filtrado.iloc[i]['id']
-                        if atualizar_cliente_directus(token, id_cliente, dados_limpos):
-                            sucessos += 1
-                        else:
-                            erros += 1
-                    except Exception as e:
-                        erros += 1
-            
-            if sucessos > 0:
-                st.toast(f"✅ {sucessos} alterações salvas automaticamente!", icon="💾")
-                time.sleep(1) 
-                st.rerun()
+                status_box_2.update(label="✅ Campanha Finalizada!", state="complete")
+                st.success(f"Feito! {env_2} enviados, {err_2} erros.")
+                st.balloons()
