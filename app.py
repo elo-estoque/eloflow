@@ -110,7 +110,7 @@ def gerar_sugestoes_elo_brindes(area_atuacao):
                     "content": prompt,
                 }
             ],
-            model="llama-3.3-70b-versatile", # Modelo ATUALIZADO e correto
+            model="llama-3.3-70b-versatile",
         )
         
         texto = chat_completion.choices[0].message.content.strip()
@@ -401,21 +401,39 @@ def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome,
     if not groq_client: return "Erro IA", "Sem Chave API configurada"
     camp_nome = campanha.get('nome_campanha', 'Retomada') if campanha else 'Contato'
     
+    # PROMPT ATUALIZADO PARA MELHOR FORMATAÇÃO E GÊNERO CORRETO
     prompt = f"""
-    Você é {usuario_nome}, {usuario_cargo} da Elo Brindes.
-    Escreva um email B2B curto e cordial para o cliente {nome_destinatario} (Ramo: {ramo}).
-    Contexto: O cliente não compra desde {data_compra}.
-    Motivo do contato: Campanha {camp_nome} e novidades no catálogo.
-    Objetivo: Agendar uma breve conversa ou enviar catálogo atualizado.
+    Aja como {usuario_nome}, {usuario_cargo} da Elo Brindes.
+    Escreva um e-mail de vendas B2B para {nome_destinatario} (Setor: {ramo}).
     
-    INSTRUÇÕES OBRIGATÓRIAS:
-    1. Gere APENAS TEXTO SIMPLES (sem negrito, sem markdown, sem HTML).
-    2. Comece com "Olá {nome_destinatario}," ou similar.
-    3. Separe o ASSUNTO do CORPO com '|||'.
-    4. NÃO inclua 'Atenciosamente' ou assinatura no final, pois o sistema já coloca a sua.
+    Contexto: Cliente inativo desde {data_compra}.
+    Objetivo: Reativar contato e levar para o site.
+
+    REGRAS DE FORMATAÇÃO (CRÍTICO):
+    1. USE PARÁGRAFOS CURTOS. Pule uma linha entre cada parágrafo (use quebra de linha dupla).
+    2. O texto deve ser visualmente limpo e fácil de ler no celular.
+    3. NÃO gere blocos de texto gigantes.
+    4. NÃO use Markdown (negrito/itálico), apenas texto puro para garantir compatibilidade.
+
+    CONTEÚDO OBRIGATÓRIO:
+    1. Saudação cordial e profissional.
+    2. Mencione que sente falta da parceria e cite novidades no catálogo para o setor de {ramo}.
+    3. Sugira 2 ou 3 categorias de produtos genéricas que fariam sentido para eles (ex: Pen drives, Mochilas, Kit Boas Vindas).
+    4. CTA (Call to Action) CLARO: "Acesse nosso catálogo completo e lançamentos em: www.elobrindes.com.br"
+    5. Encerre convidando para uma cotação rápida.
     
-    Saída esperada:
-    Assunto aqui|||Olá Fulano, corpo do email aqui...
+    OBS: A assinatura automática já será inserida pelo sistema, não precisa escrever seu nome no final.
+    
+    SAÍDA ESPERADA:
+    Assunto Persuasivo|||Olá {nome_destinatario},
+
+    [Parágrafo 1 curto de reaquecimento]
+
+    [Parágrafo 2 curto citando o setor e sugestões]
+
+    [CTA para o site www.elobrindes.com.br]
+
+    [Encerramento cordial]
     """
     try:
         chat_completion = groq_client.chat.completions.create(
@@ -425,7 +443,7 @@ def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome,
                     "content": prompt,
                 }
             ],
-            model="llama-3.3-70b-versatile", # Modelo ATUALIZADO e correto
+            model="llama-3.3-70b-versatile", # Modelo ATUALIZADO
         )
         
         txt = chat_completion.choices[0].message.content.strip()
@@ -484,6 +502,7 @@ user = st.session_state['user']
 
 nome_usuario = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
 primeiro_nome = user.get('first_name', '').strip().lower()
+# LÓGICA DE GÊNERO (Vendedor/Vendedora)
 cargo_usuario = "Vendedora" if primeiro_nome.endswith("a") else "Vendedor"
 user_email = user.get('email', '')
 
