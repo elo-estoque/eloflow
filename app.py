@@ -401,39 +401,39 @@ def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome,
     if not groq_client: return "Erro IA", "Sem Chave API configurada"
     camp_nome = campanha.get('nome_campanha', 'Retomada') if campanha else 'Contato'
     
-    # PROMPT ATUALIZADO PARA MELHOR FORMATAÇÃO E GÊNERO CORRETO
+    # PROMPT ATUALIZADO PARA HUMANO + 3 BRINDES + LINKS
     prompt = f"""
-    Aja como {usuario_nome}, {usuario_cargo} da Elo Brindes.
-    Escreva um e-mail de vendas B2B para {nome_destinatario} (Setor: {ramo}).
+    Aja como {usuario_nome}, da Elo Brindes.
+    Escreva um e-mail curto e direto para {nome_destinatario} (Setor: {ramo}).
     
     Contexto: Cliente inativo desde {data_compra}.
-    Objetivo: Reativar contato e levar para o site.
+    Objetivo: Mostrar novidades e levar para o site.
 
-    REGRAS DE FORMATAÇÃO (CRÍTICO):
-    1. USE PARÁGRAFOS CURTOS. Pule uma linha entre cada parágrafo (use quebra de linha dupla).
-    2. O texto deve ser visualmente limpo e fácil de ler no celular.
-    3. NÃO gere blocos de texto gigantes.
-    4. NÃO use Markdown (negrito/itálico), apenas texto puro para garantir compatibilidade.
+    REGRAS DE TOM DE VOZ (HUMANO):
+    1. Seja casual, mas profissional. Evite "Prezado(a)" ou linguagem muito formal. Use "Olá".
+    2. Seja breve. Ninguém lê e-mails longos.
+    3. Nada de robótico. Escreva como se estivesse falando com um colega.
 
     CONTEÚDO OBRIGATÓRIO:
-    1. Saudação cordial e profissional.
-    2. Mencione que sente falta da parceria e cite novidades no catálogo para o setor de {ramo}.
-    3. Sugira 2 ou 3 categorias de produtos genéricas que fariam sentido para eles (ex: Pen drives, Mochilas, Kit Boas Vindas).
-    4. CTA (Call to Action) CLARO: "Acesse nosso catálogo completo e lançamentos em: www.elobrindes.com.br"
-    5. Encerre convidando para uma cotação rápida.
-    
-    OBS: A assinatura automática já será inserida pelo sistema, não precisa escrever seu nome no final.
+    1. Diga que estava revisando a carteira e lembrou deles.
+    2. Sugira 3 categorias de brindes ESPECÍFICAS para o setor de {ramo}. 
+    3. Para cada sugestão, tente inventar um link de busca simples no formato: (www.elobrindes.com.br/?s=produto)
+    4. Encerre com um CTA leve: "Dá uma olhada no site ou me chama aqui se precisar de algo."
     
     SAÍDA ESPERADA:
-    Assunto Persuasivo|||Olá {nome_destinatario},
+    Assunto: Ideias para a {ramo}|||Olá {nome_destinatario}, tudo bem?
 
-    [Parágrafo 1 curto de reaquecimento]
+    Estava aqui revisando alguns parceiros antigos e lembrei de vocês. Faz um tempo que não nos falamos!
 
-    [Parágrafo 2 curto citando o setor e sugestões]
+    Separei algumas novidades que têm saído muito para o setor de {ramo}:
 
-    [CTA para o site www.elobrindes.com.br]
+    - [Sugestão 1] (Link: www.elobrindes.com.br/?s=sugestao1)
+    - [Sugestão 2] (Link: www.elobrindes.com.br/?s=sugestao2)
+    - [Sugestão 3] (Link: www.elobrindes.com.br/?s=sugestao3)
 
-    [Encerramento cordial]
+    Se precisar de cotação ou quiser ver mais opções, é só me chamar.
+
+    Abraço,
     """
     try:
         chat_completion = groq_client.chat.completions.create(
@@ -443,7 +443,7 @@ def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome,
                     "content": prompt,
                 }
             ],
-            model="llama-3.3-70b-versatile", # Modelo ATUALIZADO
+            model="llama-3.3-70b-versatile",
         )
         
         txt = chat_completion.choices[0].message.content.strip()
