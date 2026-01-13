@@ -5,6 +5,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
+from email.mime.image import MIMEImage
 from email import encoders
 from datetime import datetime, date
 import time
@@ -340,11 +341,24 @@ def config_smtp_crud(token, user_email, payload=None):
 def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp, arquivo_anexo=None):
     if not conf_smtp: return False, "SMTP não configurado"
     try:
-        msg = MIMEMultipart()
+        # Verifica se é para usar imagem INLINE (no corpo)
+        usar_imagem_inline = False
+        if arquivo_anexo is not None and "{{IMAGEM}}" in mensagem_html:
+            file_type = arquivo_anexo.type
+            if "image" in file_type:
+                usar_imagem_inline = True
+        
+        # Cria o Container Principal
+        if usar_imagem_inline:
+            msg = MIMEMultipart('related') # Related é necessário para imagens inline
+        else:
+            msg = MIMEMultipart() # Mixed (padrão)
+
         msg['From'] = conf_smtp['smtp_user']
         msg['To'] = destinatario
         msg['Subject'] = assunto
         
+        # Tratamento do Corpo HTML
         if "<div" in mensagem_html or "<html" in mensagem_html or "<span" in mensagem_html or "<table" in mensagem_html or "<a href" in mensagem_html:
             corpo_completo = mensagem_html
         else:
@@ -352,21 +366,36 @@ def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp, ar
             
         if conf_smtp.get('assinatura_html') and "</body>" not in corpo_completo:
             corpo_completo += f"<br><br>{conf_smtp['assinatura_html']}"
+        
+        # Se for imagem inline, substitui a tag pelo CID
+        if usar_imagem_inline:
+            corpo_completo = corpo_completo.replace("{{IMAGEM}}", '<br><img src="cid:imagem_corpo" style="max-width:100%; height:auto;"><br>')
             
-        msg.attach(MIMEText(corpo_completo, 'html'))
+            # Parte Alternativa (Texto/HTML)
+            msg_alternative = MIMEMultipart('alternative')
+            msg.attach(msg_alternative)
+            msg_alternative.attach(MIMEText(corpo_completo, 'html'))
+            
+            # Anexa a Imagem com o Content-ID
+            img_data = arquivo_anexo.getvalue()
+            image = MIMEImage(img_data)
+            image.add_header('Content-ID', '<imagem_corpo>')
+            image.add_header('Content-Disposition', 'inline', filename=arquivo_anexo.name)
+            msg.attach(image)
+            
+        else:
+            # Fluxo Normal (Anexo ou Sem Anexo)
+            msg.attach(MIMEText(corpo_completo, 'html'))
+            
+            # Se tiver arquivo e NÃO for inline (ex: PDF ou imagem sem tag), anexa normal
+            if arquivo_anexo is not None:
+                part = MIMEBase('application', 'octet-stream')
+                part.set_payload(arquivo_anexo.getvalue()) 
+                encoders.encode_base64(part) 
+                part.add_header('Content-Disposition', f'attachment; filename="{arquivo_anexo.name}"')
+                msg.attach(part)
         
-        # --- LOGICA DE ANEXO ---
-        if arquivo_anexo is not None:
-            # Cria a parte do anexo
-            part = MIMEBase('application', 'octet-stream')
-            part.set_payload(arquivo_anexo.getvalue()) # Le os bytes do arquivo
-            encoders.encode_base64(part) # Codifica
-            part.add_header(
-                'Content-Disposition',
-                f'attachment; filename="{arquivo_anexo.name}"'
-            )
-            msg.attach(part)
-        
+        # Envio
         server = smtplib.SMTP(conf_smtp['smtp_host'], conf_smtp['smtp_port'])
         server.starttls()
         server.login(conf_smtp['smtp_user'], conf_smtp['smtp_pass_app'])
@@ -760,11 +789,11 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
         st.subheader("2. Defina a Mensagem")
         assunto_padrao = st.text_input("Assunto do E-mail", value=f"Novidades Elo Brindes - {campanha['nome_campanha'] if campanha else 'Especial'}")
         
-        st.info("💡 Dica: Use a tabela HTML simples para evitar quebras no Outlook.")
-        corpo_padrao = st.text_area("Mensagem ou Código HTML", height=300, value=f"Olá,\n\nGostaria de apresentar as novidades da Elo Brindes para sua empresa.\n\nAguardo seu retorno.")
+        st.info("💡 **Dica de Imagem:** Para colocar a imagem no meio do texto, escreva `{{IMAGEM}}` onde quer que ela apareça e anexe a foto abaixo.")
+        corpo_padrao = st.text_area("Mensagem ou Código HTML", height=300, value=f"Olá,\n\nConfira as novidades abaixo:\n\n{{IMAGEM}}\n\nAguardo seu retorno.")
         
-        # --- CAMPO DE ANEXO (NOVO) ---
-        arquivo_para_anexo = st.file_uploader("Anexar Arquivo (Opcional)", type=['png', 'jpg', 'jpeg', 'pdf'])
+        # --- CAMPO DE ANEXO ---
+        arquivo_para_anexo = st.file_uploader("Anexar Imagem ou PDF", type=['png', 'jpg', 'jpeg', 'pdf'])
         
         # TRAVA O BOTÃO SE ESTIVER SEM SALDO OU ACIMA DE 20
         botao_disabled = (saldo_atual <= 0) or (qtd_selecionada == 0) or (qtd_selecionada > saldo_atual) or (qtd_selecionada > 20)
