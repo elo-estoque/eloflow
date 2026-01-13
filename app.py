@@ -450,8 +450,9 @@ def contar_envios_hoje_directus(token):
         base_url = DIRECTUS_URL.rstrip('/')
         hoje_str = datetime.now().strftime("%Y-%m-%d")
         
-        # CORREÇÃO: Usar _starts_with em vez de _contains para garantir que datas com hora sejam contadas
-        url = f"{base_url}/items/historico_envios?filter[data_envio][_starts_with]={hoje_str}&aggregate[count]=*"
+        # CORREÇÃO CRÍTICA: Usar _gte (Maior ou Igual) para garantir que a contagem funcione
+        # mesmo se o Directus estiver interpretando como data ou string, pegando tudo de hoje em diante.
+        url = f"{base_url}/items/historico_envios?filter[data_envio][_gte]={hoje_str}&aggregate[count]=*"
         
         r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, verify=False)
         
@@ -666,6 +667,7 @@ st.title(f"Visão Geral - {nome_usuario}")
 
 # --- PREPARAÇÃO DE DADOS GERAIS ---
 cota_maxima = 100
+# Esta função foi corrigida para usar _gte (greater than) e garantir que a contagem persista
 envios_hoje = contar_envios_hoje_directus(token)
 campanha = carregar_campanha_ativa(token)
 
@@ -737,7 +739,12 @@ with tab_carteira:
             
             def render_cota_1(enviados_sessao=0):
                 # Recalcula com base no global
-                total_real = contar_envios_hoje_directus(token)
+                # Correção: somar o que já tinha no banco + o que enviou agora se não tiver atualizado ainda
+                # Mas como salvamos no banco a cada envio, contar_envios_hoje_directus já deve pegar
+                # Para garantir a responsividade visual imediata:
+                total_real = envios_hoje + enviados_sessao
+                # Se o banco atualizar rápido, envios_hoje aumentaria no rerun, mas aqui na sessão somamos manual
+                
                 saldo_real = cota_maxima - total_real
                 with cota_container_1.container():
                     col_cota1, col_cota2 = st.columns([3, 1])
@@ -1155,7 +1162,9 @@ with tab_externo:
     cota_container_2 = st.empty()
     
     def render_cota_2(enviados_sessao=0):
-        total_real = contar_envios_hoje_directus(token)
+        # Aqui usamos o valor atualizado do banco + o da sessão atual desta aba
+        # Como o banco deve atualizar rápido no log, e envios_hoje é estático, precisamos somar.
+        total_real = envios_hoje + enviados_sessao
         saldo_real = cota_maxima - total_real
         with cota_container_2.container():
             col_cota1, col_cota2 = st.columns([3, 1])
@@ -1247,7 +1256,7 @@ with tab_externo:
         
         st.caption("Variáveis disponíveis: {nome}, {empresa}, {{IMAGEM}}")
         
-        saldo_atual_2 = cota_maxima - contar_envios_hoje_directus(token)
+        saldo_atual_2 = cota_maxima - envios_hoje
         qtd_ext = len(df_externo)
         
         btn_ext_disabled = (qtd_ext == 0) or (saldo_atual_2 <= 0) or (qtd_ext > saldo_atual_2)
