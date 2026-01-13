@@ -684,8 +684,19 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
         col_b1, col_b2 = container_botoes.columns(2)
         
         # Botões de seleção rápida
-        if col_b1.button("Selecionar Top 10"):
-            st.session_state['selected_bulk'] = lista_clientes_validos[:10]
+        if col_b1.button("Selecionar Próximos 20"):
+            # Lógica: Selecionar os próximos 20 que NÃO têm 'Contato Feito' (para evitar repetição)
+            if 'status_prospect' in df_com_email.columns:
+                pendentes = df_com_email[df_com_email['status_prospect'] != 'Contato Feito']
+                if pendentes.empty:
+                    candidatos = lista_clientes_validos
+                else:
+                    candidatos = pendentes['label_select'].tolist()
+            else:
+                candidatos = lista_clientes_validos
+                
+            st.session_state['selected_bulk'] = candidatos[:20]
+
         if col_b2.button("Limpar Seleção"):
             st.session_state['selected_bulk'] = []
             
@@ -700,8 +711,8 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
 
         # Alertas de quantidade
         if qtd_selecionada > 20:
-            st.warning("⚠️ Recomendação: Selecione no máximo 20 por vez para o envio não demorar muito.")
-        if qtd_selecionada > saldo_restante:
+            st.error("⛔ Limite de 20 envios por vez. Reduza a seleção.")
+        elif qtd_selecionada > saldo_restante:
             st.error(f"⛔ Você selecionou {qtd_selecionada}, mas só tem {saldo_restante} envios restantes hoje.")
 
     with col_m2:
@@ -711,8 +722,8 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
         st.info("💡 Dica: Use a tabela HTML simples para evitar quebras no Outlook.")
         corpo_padrao = st.text_area("Mensagem ou Código HTML", height=300, value=f"Olá,\n\nGostaria de apresentar as novidades da Elo Brindes para sua empresa.\n\nAguardo seu retorno.")
         
-        # TRAVA O BOTÃO SE ESTIVER SEM SALDO
-        botao_disabled = (saldo_restante <= 0) or (qtd_selecionada == 0) or (qtd_selecionada > saldo_restante)
+        # TRAVA O BOTÃO SE ESTIVER SEM SALDO OU ACIMA DE 20
+        botao_disabled = (saldo_restante <= 0) or (qtd_selecionada == 0) or (qtd_selecionada > saldo_restante) or (qtd_selecionada > 20)
         
         if st.button("🚀 INICIAR DISPARO SEGURO", type="primary", use_container_width=True, disabled=botao_disabled):
             conf_smtp = config_smtp_crud(token, user_email)
@@ -906,6 +917,20 @@ with col_left:
                             subj, body = gerar_email_ia(nome_para_ia, area_cli, cli['Ultima_Compra'], campanha, nome_usuario, cargo_usuario)
                             st.session_state['ia_result'] = {'subj': subj, 'body': body, 'email': email_para_ia}
             
+            # --- BOTÃO DE AÇÃO RÁPIDA (MODO ATAQUE) ---
+            st.write("")
+            if st.button("✅ Marcar 'Contato Feito'", key="btn_check_atk", use_container_width=True):
+                update_payload = {"status_prospect": "Contato Feito"}
+                if not cli['tentativa_1']:
+                    update_payload["tentativa_1"] = datetime.now().strftime("%d/%m - Manual")
+                
+                if atualizar_cliente_directus(token, cli['id'], update_payload):
+                    st.toast("✅ Status atualizado com sucesso!", icon="🎉")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Erro ao atualizar status.")
+
             if 'ia_result' in st.session_state:
                 res = st.session_state['ia_result']
                 
@@ -957,6 +982,19 @@ with col_right:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # --- BOTÃO DE AÇÃO RÁPIDA (MODO ATUALIZAÇÃO) ---
+                if st.button("✅ Marcar 'Contato Feito'", key="btn_check_upd", use_container_width=True):
+                    update_payload = {"status_prospect": "Contato Feito"}
+                    if not cli_up['tentativa_1']:
+                        update_payload["tentativa_1"] = datetime.now().strftime("%d/%m - Manual")
+                    
+                    if atualizar_cliente_directus(token, cli_up['id'], update_payload):
+                        st.toast("✅ Status atualizado com sucesso!", icon="🎉")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Erro ao atualizar status.")
     else:
         st.write("Sem dados.")
 
