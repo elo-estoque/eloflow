@@ -950,7 +950,8 @@ with col_left:
             if 'ia_result' in st.session_state:
                 res = st.session_state['ia_result']
                 
-                assinatura_automatica = f"\n\nAtenciosamente,\n\n{nome_usuario}\n{cargo_usuario}\nElo Brindes"
+                # ASSINATURA AUTOMATICA - REMOVIDO CARGO
+                assinatura_automatica = f"\n\nAtenciosamente,\n\n{nome_usuario}\nElo Brindes"
                 corpo_final = res['body'] + assinatura_automatica
                 
                 st.info(f"Assunto: {res['subj']}")
