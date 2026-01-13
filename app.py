@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import requests
-import google.generativeai as genai
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -13,6 +12,7 @@ import urllib.parse
 import warnings
 import urllib3
 import json
+from groq import Groq  # Importação da Groq
 
 # --- 1. CONFIGURAÇÕES INICIAIS ---
 st.set_page_config(page_title="ELOFLOW", layout="wide", page_icon="🦅")
@@ -72,49 +72,29 @@ st.markdown("""
 
 # --- 3. VARIÁVEIS DE AMBIENTE ---
 DIRECTUS_URL = os.getenv("DIRECTUS_URL", "https://elo-flow-eloflowdirectus-a9lluh-7f4d22-152-53-165-62.traefik.me")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") 
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "") 
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# Configuração do Cliente Groq
+groq_client = None
+if GROQ_API_KEY:
+    try:
+        groq_client = Groq(api_key=GROQ_API_KEY)
+    except Exception as e:
+        st.error(f"Erro ao configurar Groq: {e}")
 
 # =========================================================
 #  FUNÇÕES AUXILIARES E DE NEGÓCIO
 # =========================================================
-
-@st.cache_resource
-def obter_modelo_compativel():
-    if not GEMINI_API_KEY: return "gemini-pro"
-    try:
-        modelos = genai.list_models()
-        modelos_validos = []
-        for m in modelos:
-            if 'generateContent' in m.supported_generation_methods:
-                modelos_validos.append(m.name)
-        
-        for m in modelos_validos:
-            if 'flash' in m: return m
-        for m in modelos_validos:
-            if 'pro' in m: return m
-        
-        if modelos_validos:
-            return modelos_validos[0]
-            
-    except:
-        pass
-    return "gemini-1.5-flash"
 
 def limpar_telefone(phone):
     if pd.isna(phone): return None
     return "".join(filter(str.isdigit, str(phone)))
 
 def gerar_sugestoes_elo_brindes(area_atuacao):
-    if not GEMINI_API_KEY:
+    if not groq_client:
         return ["🎁 Kit Boas Vindas Personalizado", "🎁 Caneta Metal Premium", "🎁 Caderno Moleskine com Logo"], "Sugestão Padrão (Sem IA)"
     
     try:
-        nome_modelo = obter_modelo_compativel()
-        model = genai.GenerativeModel(nome_modelo)
-        
         prompt = f"""
         Você é um consultor especialista da Elo Brindes (www.elobrindes.com.br).
         O cliente atua na área: '{area_atuacao}'.
@@ -122,8 +102,18 @@ def gerar_sugestoes_elo_brindes(area_atuacao):
         Responda EXATAMENTE no formato: Produto A|Produto B|Produto C
         Não use introduções, apenas os nomes dos produtos.
         """
-        response = model.generate_content(prompt)
-        texto = response.text.strip()
+        
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model="llama3-70b-8192", # Modelo rápido e potente da Groq
+        )
+        
+        texto = chat_completion.choices[0].message.content.strip()
         
         if "|" in texto:
             produtos = texto.split("|")
@@ -408,7 +398,7 @@ def contar_envios_hoje_directus(token):
     return 0
 
 def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome, usuario_cargo):
-    if not GEMINI_API_KEY: return "Erro IA", "Sem Chave API configurada"
+    if not groq_client: return "Erro IA", "Sem Chave API configurada"
     camp_nome = campanha.get('nome_campanha', 'Retomada') if campanha else 'Contato'
     
     prompt = f"""
@@ -428,10 +418,17 @@ def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome,
     Assunto aqui|||Olá Fulano, corpo do email aqui...
     """
     try:
-        nome_modelo = obter_modelo_compativel()
-        model = genai.GenerativeModel(nome_modelo)
-        resp = model.generate_content(prompt)
-        txt = resp.text.strip()
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model="llama3-70b-8192", 
+        )
+        
+        txt = chat_completion.choices[0].message.content.strip()
         
         assunto = "Contato Elo Brindes"
         corpo = txt
@@ -909,7 +906,7 @@ with col_left:
                     st.link_button("📧 Gmail", link_gmail, use_container_width=True)
             with b3:
                 if st.button("✨ IA Magica", use_container_width=True):
-                    if not GEMINI_API_KEY: 
+                    if not groq_client: 
                         st.error("Sem Chave IA")
                     else:
                         with st.spinner(f"🤖 Escrevendo e-mail para {nome_para_ia}..."):
