@@ -4,6 +4,8 @@ import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from datetime import datetime, date
 import time
 import os
@@ -335,7 +337,7 @@ def config_smtp_crud(token, user_email, payload=None):
         except: pass
         return None
 
-def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp):
+def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp, arquivo_anexo=None):
     if not conf_smtp: return False, "SMTP não configurado"
     try:
         msg = MIMEMultipart()
@@ -352,6 +354,18 @@ def enviar_email_smtp(token, destinatario, assunto, mensagem_html, conf_smtp):
             corpo_completo += f"<br><br>{conf_smtp['assinatura_html']}"
             
         msg.attach(MIMEText(corpo_completo, 'html'))
+        
+        # --- LOGICA DE ANEXO ---
+        if arquivo_anexo is not None:
+            # Cria a parte do anexo
+            part = MIMEBase('application', 'octet-stream')
+            part.set_payload(arquivo_anexo.getvalue()) # Le os bytes do arquivo
+            encoders.encode_base64(part) # Codifica
+            part.add_header(
+                'Content-Disposition',
+                f'attachment; filename="{arquivo_anexo.name}"'
+            )
+            msg.attach(part)
         
         server = smtplib.SMTP(conf_smtp['smtp_host'], conf_smtp['smtp_port'])
         server.starttls()
@@ -738,6 +752,9 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
         st.info("💡 Dica: Use a tabela HTML simples para evitar quebras no Outlook.")
         corpo_padrao = st.text_area("Mensagem ou Código HTML", height=300, value=f"Olá,\n\nGostaria de apresentar as novidades da Elo Brindes para sua empresa.\n\nAguardo seu retorno.")
         
+        # --- CAMPO DE ANEXO (NOVO) ---
+        arquivo_para_anexo = st.file_uploader("Anexar Arquivo (Opcional)", type=['png', 'jpg', 'jpeg', 'pdf'])
+        
         # TRAVA O BOTÃO SE ESTIVER SEM SALDO OU ACIMA DE 20
         botao_disabled = (saldo_restante <= 0) or (qtd_selecionada == 0) or (qtd_selecionada > saldo_restante) or (qtd_selecionada > 20)
         
@@ -791,7 +808,8 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
                     email_enviado_para_cliente = False # Flag para saber se enviou pelo menos 1
                     
                     for dest in destinatarios:
-                        sucesso, msg_log = enviar_email_smtp(token, dest['email'], assunto_padrao, msg_final, conf_smtp)
+                        # Passa o anexo se existir
+                        sucesso, msg_log = enviar_email_smtp(token, dest['email'], assunto_padrao, msg_final, conf_smtp, arquivo_anexo=arquivo_para_anexo)
                         
                         # LOG NO DIRECTUS (CRÍTICO PARA CONTAGEM)
                         # Registramos o log independente de sucesso ou erro, mas marcamos o status
