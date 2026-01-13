@@ -12,7 +12,7 @@ import urllib.parse
 import warnings
 import urllib3
 import json
-from groq import Groq  # Importação da Groq
+from groq import Groq
 
 # --- 1. CONFIGURAÇÕES INICIAIS ---
 st.set_page_config(page_title="ELOFLOW", layout="wide", page_icon="🦅")
@@ -110,7 +110,7 @@ def gerar_sugestoes_elo_brindes(area_atuacao):
                     "content": prompt,
                 }
             ],
-            model="llama3-70b-8192", # Modelo rápido e potente da Groq
+            model="llama-3.3-70b-versatile", # Modelo ATUALIZADO e correto
         )
         
         texto = chat_completion.choices[0].message.content.strip()
@@ -425,7 +425,7 @@ def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome,
                     "content": prompt,
                 }
             ],
-            model="llama3-70b-8192", 
+            model="llama-3.3-70b-versatile", # Modelo ATUALIZADO e correto
         )
         
         txt = chat_completion.choices[0].message.content.strip()
