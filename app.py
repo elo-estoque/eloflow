@@ -380,9 +380,15 @@ def registrar_log(token, pj_id, assunto, corpo, status):
     try:
         base_url = DIRECTUS_URL.rstrip('/')
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        # CORREÇÃO: Usar formato de data simples para compatibilidade com Directus
+        data_formatada = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
         payload = {
-            "cliente_pj_id": str(pj_id), "assunto_gerado": assunto, "corpo_email": corpo, 
-            "status_envio": status, "data_envio": datetime.now().isoformat()
+            "cliente_pj_id": str(pj_id), 
+            "assunto_gerado": assunto, 
+            "corpo_email": corpo, 
+            "status_envio": status, 
+            "data_envio": data_formatada
         }
         requests.post(f"{base_url}/items/historico_envios", json=payload, headers=headers, verify=False)
     except: pass
@@ -396,8 +402,8 @@ def contar_envios_hoje_directus(token):
         base_url = DIRECTUS_URL.rstrip('/')
         hoje_str = datetime.now().strftime("%Y-%m-%d")
         
-        # Filtra onde 'data_envio' contem a data de hoje
-        url = f"{base_url}/items/historico_envios?filter[data_envio][_contains]={hoje_str}&aggregate[count]=*"
+        # CORREÇÃO: Usar _starts_with em vez de _contains para garantir que datas com hora sejam contadas
+        url = f"{base_url}/items/historico_envios?filter[data_envio][_starts_with]={hoje_str}&aggregate[count]=*"
         
         r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, verify=False)
         
@@ -480,20 +486,20 @@ def gerar_email_ia(nome_destinatario, ramo, data_compra, campanha, usuario_nome,
 # --- TENTATIVA DE RECUPERAR SESSÃO (F5 / REFRESH) ---
 if 'token' not in st.session_state:
     try:
-        # Verifica se há token salvo nos parâmetros da URL (Query Params)
-        params = st.query_params
-        token_url = params.get("token")
+        token_url = st.query_params.get("token")
         
         if token_url:
-            # Valida se o token ainda funciona no Directus
             user_data = validar_token_existente(token_url)
             if user_data:
                 st.session_state['token'] = token_url
                 st.session_state['user'] = user_data
             else:
-                # Se expirou ou é inválido, limpa a URL
                 st.query_params.clear()
     except: pass
+
+# --- GARANTIA DE PERSISTÊNCIA NA URL ---
+if 'token' in st.session_state:
+    st.query_params["token"] = st.session_state['token']
 
 if 'token' not in st.session_state:
     c1, c2, c3 = st.columns([1,2,1])
@@ -506,7 +512,6 @@ if 'token' not in st.session_state:
             if token:
                 st.session_state['token'] = token
                 st.session_state['user'] = user
-                # Salva o token na URL para persistir no F5
                 st.query_params["token"] = token
                 st.rerun()
     st.stop()
@@ -516,7 +521,6 @@ user = st.session_state['user']
 
 nome_usuario = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
 primeiro_nome = user.get('first_name', '').strip().lower()
-# LÓGICA DE GÊNERO (Vendedor/Vendedora)
 cargo_usuario = "Vendedora" if primeiro_nome.endswith("a") else "Vendedor"
 user_email = user.get('email', '')
 
@@ -527,12 +531,11 @@ with st.sidebar:
     st.caption(f"💼 {cargo_usuario}")
     if st.button("Sair"):
         st.session_state.clear()
-        st.query_params.clear() # Limpa o token da URL ao sair
+        st.query_params.clear() 
         st.rerun()
     
     st.divider()
 
-    # --- ALTERAR SENHA (NOVO) ---
     with st.expander("🔐 Alterar Senha", expanded=False):
         form_senha = st.form("form_change_pw")
         with form_senha:
@@ -560,7 +563,6 @@ with st.sidebar:
 
     st.divider()
 
-    # --- MANUAL DE INSTRUÇÕES ---
     with st.expander("📘 MANUAL DE USO (Leia Antes)", expanded=False):
         st.markdown("""
         ### 🎯 Resumo do ELOFLOW
@@ -679,20 +681,28 @@ st.divider()
 with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
     st.markdown("⚠️ **Regras de Segurança:** O sistema envia 1 e-mail a cada **15~45 segundos** para evitar bloqueios do Google.")
     
-    # 1. VERIFICAÇÃO DE COTA DIÁRIA
+    # 1. VERIFICAÇÃO DE COTA DIÁRIA (COM ATUALIZAÇÃO VISUAL)
     cota_maxima = 100
     envios_hoje = contar_envios_hoje_directus(token)
-    saldo_restante = cota_maxima - envios_hoje
     
-    # Barra de progresso da cota diária
-    col_cota1, col_cota2 = st.columns([3, 1])
-    with col_cota1:
-        st.progress(min(envios_hoje / cota_maxima, 1.0), text=f"Cota Diária da Equipe: {envios_hoje}/{cota_maxima} envios hoje")
-    with col_cota2:
-        if saldo_restante <= 0:
-            st.error("⛔ Cota Atingida!")
-        else:
-            st.success(f"✅ {saldo_restante} livres")
+    # Placeholder para permitir atualização da cota em tempo real
+    cota_container = st.empty()
+    
+    def render_cota(enviados_sessao=0):
+        total_real = envios_hoje + enviados_sessao
+        saldo_real = cota_maxima - total_real
+        with cota_container.container():
+            col_cota1, col_cota2 = st.columns([3, 1])
+            with col_cota1:
+                st.progress(min(total_real / cota_maxima, 1.0), text=f"Cota Diária da Equipe: {total_real}/{cota_maxima} envios hoje")
+            with col_cota2:
+                if saldo_real <= 0:
+                    st.error("⛔ Cota Atingida!")
+                else:
+                    st.success(f"✅ {saldo_real} livres")
+    
+    # Renderiza estado inicial
+    render_cota(0)
 
     st.divider()
 
@@ -715,7 +725,6 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
         
         # Botões de seleção rápida
         if col_b1.button("Selecionar Próximos 20"):
-            # Lógica: Selecionar os próximos 20 que NÃO têm 'Contato Feito' (para evitar repetição)
             if 'status_prospect' in df_com_email.columns:
                 pendentes = df_com_email[df_com_email['status_prospect'] != 'Contato Feito']
                 if pendentes.empty:
@@ -737,13 +746,15 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
         )
         
         qtd_selecionada = len(selecionados_bulk)
+        saldo_atual = cota_maxima - envios_hoje
+        
         st.caption(f"Selecionados: {qtd_selecionada} empresas")
 
         # Alertas de quantidade
         if qtd_selecionada > 20:
             st.error("⛔ Limite de 20 envios por vez. Reduza a seleção.")
-        elif qtd_selecionada > saldo_restante:
-            st.error(f"⛔ Você selecionou {qtd_selecionada}, mas só tem {saldo_restante} envios restantes hoje.")
+        elif qtd_selecionada > saldo_atual:
+            st.error(f"⛔ Você selecionou {qtd_selecionada}, mas só tem {saldo_atual} envios restantes hoje.")
 
     with col_m2:
         st.subheader("2. Defina a Mensagem")
@@ -756,7 +767,7 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
         arquivo_para_anexo = st.file_uploader("Anexar Arquivo (Opcional)", type=['png', 'jpg', 'jpeg', 'pdf'])
         
         # TRAVA O BOTÃO SE ESTIVER SEM SALDO OU ACIMA DE 20
-        botao_disabled = (saldo_restante <= 0) or (qtd_selecionada == 0) or (qtd_selecionada > saldo_restante) or (qtd_selecionada > 20)
+        botao_disabled = (saldo_atual <= 0) or (qtd_selecionada == 0) or (qtd_selecionada > saldo_atual) or (qtd_selecionada > 20)
         
         if st.button("🚀 INICIAR DISPARO SEGURO", type="primary", use_container_width=True, disabled=botao_disabled):
             conf_smtp = config_smtp_crud(token, user_email)
@@ -812,13 +823,14 @@ with st.expander("📢 Disparo em Massa (Modo Sniper 🎯)", expanded=False):
                         sucesso, msg_log = enviar_email_smtp(token, dest['email'], assunto_padrao, msg_final, conf_smtp, arquivo_anexo=arquivo_para_anexo)
                         
                         # LOG NO DIRECTUS (CRÍTICO PARA CONTAGEM)
-                        # Registramos o log independente de sucesso ou erro, mas marcamos o status
                         status_envio_db = "Enviado" if sucesso else f"Erro: {msg_log}"
                         registrar_log(token, cli_row['pj_id'], assunto_padrao, f"Para: {dest['email']}", status_envio_db)
 
                         if sucesso:
                             email_enviado_para_cliente = True
                             enviados += 1
+                            # ATUALIZA A BARRA DE COTA VISUALMENTE AGORA
+                            render_cota(enviados)
                         else:
                             erros += 1
                             log_erros.append(f"{cli_row['razao_social']} ({dest['email']}): {msg_log}")
